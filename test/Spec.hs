@@ -26,7 +26,7 @@ collectSpans actn = do
   ref <- liftIO $ newIORef []
   liftIO $ fix $ \loop -> atomically (tryReadTChan $ tracerChannel tracer) >>= \case
     Nothing -> pure ()
-    Just spn -> modifyIORef ref (spn:) >> loop
+    Just (spn, _, _, _) -> modifyIORef ref (spn:) >> loop
   reverse <$> liftIO (readIORef ref)
 
 main :: IO ()

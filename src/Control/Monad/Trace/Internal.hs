@@ -1,16 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Monitor.Tracing.Internal (
-  TraceID(..), randomTraceID,
-  SpanID(..), randomSpanID,
-  Context(..), parentSpanID,
-  Name,
-  ActiveSpan(..), freezeSpan,
-  Span(..),
-  Reference(..),
-  Builder(..), builder,
-  Key, Annotation(..)
-) where
+module Control.Monad.Trace.Internal
+  ( TraceID(..), randomTraceID
+  , SpanID(..), randomSpanID
+  , Context(..)
+  , Name
+  , Span(..), Interval(..), Tags, Logs
+  , Reference(..)
+  , Key, Value(..)
+  ) where
 
 import Control.Monad (replicateM)
 import qualified Data.Aeson as JSON
@@ -18,12 +16,8 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS.Char8
 import qualified Data.ByteString.Base16 as Base16
-import Data.List (sortOn)
 import Data.Map.Strict (Map)
-import qualified Data.Map.Strict as Map
 import Data.Set (Set)
-import qualified Data.Set as Set
-import Data.String (IsString(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock (NominalDiffTime)
@@ -72,9 +66,9 @@ randomSpanID = SpanID <$> randomID 8
 -- the span's ID. Span contexts can be exported (resp. imported) via their 'JSON.toJSON' (resp.
 -- 'JSON.fromJSON') instance.
 data Context = Context
-  { _contextTraceID :: !TraceID
-  , _contextSpanID :: !SpanID
-  , _contextBaggages :: !(Map Key ByteString)
+  { contextTraceID :: !TraceID
+  , contextSpanID :: !SpanID
+  , contextBaggages :: !(Map Key ByteString)
   } deriving (Eq, Ord, Show)
 
 -- | A relationship between spans.
@@ -90,66 +84,24 @@ data Reference
   -- ^ If the parent does not depend on the child, we use a 'FollowsFrom' reference.
   deriving (Eq, Ord, Show)
 
-parentSpanID :: Reference -> Maybe SpanID
-parentSpanID (ChildOf spanID) = Just spanID
-parentSpanID _ = Nothing
-
-data Annotation
+data Value
   = TagValue !JSON.Value
   | LogValue !JSON.Value !(Maybe POSIXTime)
 
--- | A still-active part of a trace.
-data ActiveSpan = ActiveSpan
-  { _activeSpanContext :: !Context
-  , _activeSpanName :: !Name
-  , _activeSpanReferences :: !(Set Reference)
-  , _activeSpanTags :: !(Map Key JSON.Value)
-  , _activeSpanLogs :: ![(POSIXTime, Key, JSON.Value)]
-  } deriving Show
-
-freezeSpan :: ActiveSpan -> POSIXTime -> POSIXTime -> Span
-freezeSpan (ActiveSpan ctx name refs tags logs) start end =
-  Span ctx name refs start (end - start) tags (sortOn (\(t, k, _) -> (t, k)) logs)
-
--- | A piece of a trace.
 data Span = Span
-  { _spanContext :: !Context
-  , _spanName :: !Name
-  , _spanReferences :: !(Set Reference)
-  , _spanStartTime :: !POSIXTime
-  , _spanDuration :: !NominalDiffTime
-  , _spanTags :: !(Map Key JSON.Value)
-  , _spanLogs :: ![(POSIXTime, Key, JSON.Value)] -- ^ Sorted in natural order.
-  } deriving Show
+  { spanName :: !Name
+  , spanContext :: !Context
+  , spanReferences :: !(Set Reference)
+  }
 
--- | A trace builder.
---
--- Note that 'Builder' has an 'IsString' instance, producing a span with the given string as name,
--- no additional references, tags, or baggages. This allows convenient creation of spans via the
--- @OverloadedStrings@ pragma.
-data Builder = Builder
-  { builderName :: !Text
-  -- ^ Name of the generated span.
-  , builderTraceID :: !(Maybe TraceID)
-  -- ^ The trace ID of the generated span. If unset, the active span's trace ID will be used if
-  -- present, otherwise a new ID will be generated.
-  , builderSpanID :: !(Maybe SpanID)
-  -- ^ The ID of the generated span, otherwise the ID will be auto-generated. In general you should
-  -- not set this (and if you do, the trace ID should also be set).
-  , builderReferences :: !(Set Reference)
-  -- ^ Additional references to add.
-  , builderTags :: !(Map Key JSON.Value)
-  -- ^ Initial set of tags for the root span.
-  , builderBaggages :: !(Map Key ByteString)
-  -- ^ Additional baggages to add to the span, forwarded to all children.
-  } deriving Show
+data Interval = Interval
+  { intervalStart :: !POSIXTime
+  , intervalDuration :: !NominalDiffTime
+  }
 
--- | Returns a builder with the given input as name and all other fields empty.
-builder :: Name -> Builder
-builder name = Builder name Nothing Nothing Set.empty Map.empty Map.empty
+type Tags = Map Key JSON.Value
 
-instance IsString Builder where
-  fromString = builder . T.pack
+type Logs = [(POSIXTime, Key, JSON.Value)]
 
 randomID :: Int -> IO ByteString
 randomID len = BS.pack <$> replicateM len randomIO

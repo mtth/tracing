@@ -1,14 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Control.Monad.Trace.Internal
-  ( TraceID(..), randomTraceID
-  , SpanID(..), randomSpanID
-  , Context(..)
-  , Name
-  , Span(..), Interval(..), Tags, Logs
-  , Reference(..)
-  , Key, Value(..)
-  ) where
+module Control.Monad.Trace.Internal (
+  TraceID(..), randomTraceID,
+  SpanID(..), randomSpanID,
+  Context(..),
+  Name,
+  Span(..),
+  Reference(..),
+  Key, Value(..)
+) where
 
 import Control.Monad (replicateM)
 import qualified Data.Aeson as JSON
@@ -20,7 +20,6 @@ import Data.Map.Strict (Map)
 import Data.Set (Set)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time.Clock (NominalDiffTime)
 import Data.Time.Clock.POSIX (POSIXTime)
 import System.Random (randomIO)
 
@@ -84,24 +83,17 @@ data Reference
   -- ^ If the parent does not depend on the child, we use a 'FollowsFrom' reference.
   deriving (Eq, Ord, Show)
 
+-- | Metadata attached to a span.
 data Value
   = TagValue !JSON.Value
   | LogValue !JSON.Value !(Maybe POSIXTime)
 
+-- | A part of a trace.
 data Span = Span
   { spanName :: !Name
   , spanContext :: !Context
   , spanReferences :: !(Set Reference)
   }
-
-data Interval = Interval
-  { intervalStart :: !POSIXTime
-  , intervalDuration :: !NominalDiffTime
-  }
-
-type Tags = Map Key JSON.Value
-
-type Logs = [(POSIXTime, Key, JSON.Value)]
 
 randomID :: Int -> IO ByteString
 randomID len = BS.pack <$> replicateM len randomIO

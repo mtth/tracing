@@ -3,12 +3,12 @@
 {-# LANGUAGE TypeFamilies #-}
 
 -- | The 'MonadTrace' class
-module Control.Monad.Trace.Class
-  ( MonadTrace(..)
-  , Builder(..), Name, SpanID, TraceID, Reference(..), builder
-  , Span(..), Context(..)
-  , Key, Value, tagDoubleValue, tagInt64Value, tagTextValue, logValue, logValueAt
-  ) where
+module Control.Monad.Trace.Class (
+  MonadTrace(..),
+  Builder(..), Name, SpanID, TraceID, Reference(..), builder,
+  Span(..), Context(..),
+  Key, Value, tagDoubleValue, tagInt64Value, tagTextValue, logValue, logValueAt
+) where
 
 import Control.Monad.Trace.Internal
 
@@ -29,17 +29,25 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
-import qualified Data.Text as T
-import Data.Time.Clock.POSIX (POSIXTime)
 import Data.String (IsString(..))
 import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Time.Clock.POSIX (POSIXTime)
 
+-- | A monad capable of generating traces.
+--
+-- There are currently two instances of this monad:
+--
+-- * 'Control.Monad.Trace.TraceT', which emits spans for each trace in 'IO' and is meant to be used
+-- in production.
+-- * 'Identity', where tracing is a no-op and allows testing traced functions without any overhead
+-- or complex setup.
 class Monad m => MonadTrace m where
 
-  -- | Starts a new child span, wrapping the input action.
+  -- | Trace an action, wrapping it inside a new span.
   trace :: Builder -> m a -> m a
 
-  -- | Extracts the currently active span.
+  -- | Extracts the currently active span, or 'Nothing' if the action is not being traced.
   activeSpan :: m (Maybe Span)
   default activeSpan :: (MonadTrace n, MonadTrans t, m ~ t n) => m (Maybe Span)
   activeSpan = lift activeSpan

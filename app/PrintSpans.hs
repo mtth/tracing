@@ -13,7 +13,7 @@ import qualified Monitor.Tracing.Zipkin as Zipkin
 import qualified Net.IPv4 as IPv4
 
 example1 :: MonadTrace m => m ()
-example1 = Zipkin.rootSpan Zipkin.Accept "example1" $ do
+example1 = Zipkin.rootSpan Zipkin.Deny "example1" $ do
   Zipkin.annotate "TEST_LOG0"
   Zipkin.localSpan "nested1" $ Zipkin.tag "TEST_TAG1" "12"
   Zipkin.localSpan "nested2" $ do
@@ -38,11 +38,8 @@ main = do
   zipkin <- Zipkin.new $ Zipkin.defaultSettings
     { Zipkin.settingsEndpoint = Just $ Zipkin.defaultEndpoint
       { Zipkin.endpointService = Just "print-spans"
-      , Zipkin.endpointPort = Just 1234
-      , Zipkin.endpointIPv4 = Just IPv4.localhost
-      }
-    , Zipkin.settingsHost = "localhost"
-    }
+      , Zipkin.endpointIPv4 = Just IPv4.localhost }
+    , Zipkin.settingsHost = "localhost" }
   Zipkin.run zipkin example1
   Zipkin.run zipkin example2
-  Zipkin.flush zipkin
+  Zipkin.publish zipkin

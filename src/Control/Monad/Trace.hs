@@ -5,12 +5,12 @@
 {-# LANGUAGE UndecidableInstances #-} -- For the MonadReader instance.
 
 -- | The 'TraceT' class.
-module Control.Monad.Trace
-  ( TraceT, runTraceT
-  , Tracer(..)
-  , Tags, Logs, Interval(..)
-  , newTracer
-  ) where
+module Control.Monad.Trace (
+  TraceT, runTraceT,
+  Tracer(..),
+  Tags, Logs, Interval(..),
+  newTracer
+) where
 
 import Prelude hiding (span)
 
@@ -24,17 +24,34 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (ReaderT(..), ask, asks, local, runReaderT)
 import Control.Monad.Reader.Class (MonadReader)
 import Control.Monad.Trans.Class (MonadTrans(..))
+import qualified Data.Aeson as JSON
 import Data.List (sortOn)
+import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
-import Data.Time.Clock.POSIX (getPOSIXTime)
+import Data.Time.Clock (NominalDiffTime)
+import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import UnliftIO (MonadUnliftIO, UnliftIO(..), askUnliftIO, withRunInIO, withUnliftIO)
 
+-- | A collection of span tags.
+type Tags = Map Key JSON.Value
+
+-- | A collection of span logs, sorted in chronological order.
+type Logs = [(POSIXTime, Key, JSON.Value)]
+
+-- | Timing information about a span.
+data Interval = Interval
+  { intervalStart :: !POSIXTime
+  , intervalDuration :: !NominalDiffTime
+  }
+
+-- | A tracer collects spans emitted inside 'TraceT'.
 data Tracer = Tracer
   { tracerChannel :: TChan (Span, Tags, Logs, Interval)
   , tracerPendingCount :: TVar Int
   }
 
+-- | Creates a new 'Tracer'.
 newTracer :: MonadIO m => m Tracer
 newTracer = liftIO $ Tracer <$> newTChanIO <*> newTVarIO 0
 
@@ -45,9 +62,7 @@ data Scope = Scope
   , scopeLogs :: !(Maybe (TVar Logs))
   }
 
--- Asynchronous trace collection monad.
---
--- If the tracer is closed before a 'trace' call, 'trace' will throw 'TracerClosed'.
+-- | Asynchronous trace collection monad.
 newtype TraceT m a = TraceT { traceTReader :: ReaderT Scope m a }
   deriving (Functor, Applicative, Monad, MonadIO, MonadTrans)
 

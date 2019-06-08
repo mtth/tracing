@@ -3,8 +3,9 @@
 module Monitor.Tracing.Internal (
   TraceID(..), randomTraceID,
   SpanID(..), randomSpanID,
-  Context(..),
+  Context(..), parentSpanID,
   Name,
+  ActiveSpan(..), freezeSpan,
   Span(..),
   Reference(..),
   Builder(..), builder,
@@ -17,6 +18,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BS.Char8
 import qualified Data.ByteString.Base16 as Base16
+import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -32,6 +34,8 @@ import System.Random (randomIO)
 type Name = Text
 
 -- | The type of annotations' keys.
+--
+-- Keys starting with double underscores are reserved and should not be used.
 type Key = Text
 
 -- | A 128-bit trace identifier.
@@ -73,32 +77,39 @@ data Context = Context
   , _contextBaggages :: !(Map Key ByteString)
   } deriving (Eq, Ord, Show)
 
-instance JSON.FromJSON Context where
-  parseJSON = JSON.withObject "context" $ \v -> Context
-    <$> v JSON..: "trace-id"
-    <*> v JSON..: "span-id"
-    <*> pure Map.empty -- TODO
-
-instance JSON.ToJSON Context where
-  toJSON (Context traceID spanID _) = JSON.object
-    [ "trace-id" JSON..= traceID
-    , "span-id" JSON..= spanID ]
-
 -- | A relationship between spans.
 --
 -- There are currently two types of references, both of which model direct causal relationships
 -- between a child and a parent. More background on references is available in the opentracing
 -- specification: https://github.com/opentracing/specification/blob/master/specification.md.
 data Reference
-  = ChildOf !Context
+  = ChildOf !SpanID
   -- ^ 'ChildOf' references imply that the parent span depends on the child span in some capacity.
+  -- Note that this reference type is only valid within a single trace.
   | FollowsFrom !Context
   -- ^ If the parent does not depend on the child, we use a 'FollowsFrom' reference.
   deriving (Eq, Ord, Show)
 
+parentSpanID :: Reference -> Maybe SpanID
+parentSpanID (ChildOf spanID) = Just spanID
+parentSpanID _ = Nothing
+
 data Annotation
   = TagValue !JSON.Value
   | LogValue !JSON.Value !(Maybe POSIXTime)
+
+-- | A still-active part of a trace.
+data ActiveSpan = ActiveSpan
+  { _activeSpanContext :: !Context
+  , _activeSpanName :: !Name
+  , _activeSpanReferences :: !(Set Reference)
+  , _activeSpanTags :: !(Map Key JSON.Value)
+  , _activeSpanLogs :: ![(POSIXTime, Key, JSON.Value)]
+  } deriving Show
+
+freezeSpan :: ActiveSpan -> POSIXTime -> POSIXTime -> Span
+freezeSpan (ActiveSpan ctx name refs tags logs) start end =
+  Span ctx name refs start (end - start) tags (sortOn (\(t, k, _) -> (t, k)) logs)
 
 -- | A piece of a trace.
 data Span = Span
@@ -119,6 +130,12 @@ data Span = Span
 data Builder = Builder
   { builderName :: !Text
   -- ^ Name of the generated span.
+  , builderTraceID :: !(Maybe TraceID)
+  -- ^ The trace ID of the generated span. If unset, the active span's trace ID will be used if
+  -- present, otherwise a new ID will be generated.
+  , builderSpanID :: !(Maybe SpanID)
+  -- ^ The ID of the generated span, otherwise the ID will be auto-generated. In general you should
+  -- not set this (and if you do, the trace ID should also be set).
   , builderReferences :: !(Set Reference)
   -- ^ Additional references to add.
   , builderTags :: !(Map Key JSON.Value)
@@ -129,7 +146,7 @@ data Builder = Builder
 
 -- | Returns a builder with the given input as name and all other fields empty.
 builder :: Name -> Builder
-builder name = Builder name Set.empty Map.empty Map.empty
+builder name = Builder name Nothing Nothing Set.empty Map.empty Map.empty
 
 instance IsString Builder where
   fromString = builder . T.pack

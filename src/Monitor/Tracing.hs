@@ -16,9 +16,6 @@ module Monitor.Tracing
   -- * Metadata
   -- $readingMetadata
   , Key, spanTags, spanLogs, spanBaggages
-  -- * Creation
-  , module Control.Monad.Trace.Class
-  , module Control.Monad.Trace
   ) where
 
 import Control.Monad.Trace
@@ -67,9 +64,9 @@ import Data.Time.Clock.POSIX (POSIXTime)
 -- @
 --  main :: IO ()
 --  main = do
---    tracer <- newTracer
---    publishSpans tracer $ zipkin "http://localhost:1234"
---    tasks <- collectSpans tracer listTasks' ""
+--    tracer <- startTracer $ zipkinPublisher "http://localhost:1234"
+--    tasks <- trace tracer "" listTasks'
+--    stopTracer tracer
 --    print tasks
 -- @
 
@@ -86,6 +83,10 @@ import Data.Time.Clock.POSIX (POSIXTime)
 -- Note that the type of metadata influences how it is written. For example, baggages can only be
 -- written at span creation time (to ensure that all children see consistent values). See
 -- 'annotateSpan' and 'Builder' for more information.
+
+-- startTracer :: MonadIO m => Request -> Manager -> m Tracer
+-- stopTracer :: MonadIO m -> Tracer -> m ()
+--
 
 -- | Extracts a span's context. This context uniquely identifies the span.
 spanContext :: Span -> Context

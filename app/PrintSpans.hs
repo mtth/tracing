@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | A simple tracing example which outputs traces to stdout.
@@ -5,47 +6,46 @@
 -- It also showcases how to trace calls across threads.
 module Main where
 
-import Control.Concurrent
-import Control.Monad (forever, void)
+import Control.Concurrent ()
+import Control.Monad (void)
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import qualified Data.Aeson as JSON
-import qualified Data.ByteString.Lazy.Char8 as LBS
-import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Monitor.Tracing
+import qualified Monitor.Tracing.Zipkin as Zipkin
+import qualified Net.IPv4 as IPv4
 import UnliftIO (MonadUnliftIO, withRunInIO)
 
-stdoutPublisher :: Publisher
-stdoutPublisher (Just (nextSpan, _)) = print nextSpan
-stdoutPublisher _ = pure ()
+example1 :: MonadTrace m => m ()
+example1 = Zipkin.rootSpan Zipkin.defaultFlags "example1" $ do
+  Zipkin.annotate "TEST_LOG0"
+  Zipkin.localSpan "nested1" $ Zipkin.tag "TEST_TAG1" "12"
+  Zipkin.localSpan "nested2" $ do
+    Zipkin.tag "TEST_TAG2" "a.2"
+    Zipkin.localSpan "nestednsted" $ Zipkin.tag "TEST_TAG3" ""
 
-doSomething :: (MonadTrace m, MonadUnliftIO m) => m ()
-doSomething = childSpan "outer" { builderTags = Map.singleton "hi" "hey" } $ do
-  ctx <- currentContext
-  annotateSpan "log2" $ logValue ("abc" :: Text)
-  annotateSpan "tag2" $ tagTextValue "def"
-  liftIO $ print ctx
+example2 :: (MonadTrace m, MonadUnliftIO m) => m ()
+example2 = Zipkin.rootSpan Zipkin.defaultFlags "something" $ do
+  Zipkin.annotate "log2"
+  Zipkin.tag "tag2" "def"
   liftIO $ threadDelay 100000
-  childSpan "A" $ liftIO $ threadDelay 10000
-  forkChildSpan "nested" $ do
-    liftIO . print =<< currentContext
-    liftIO $ threadDelay 20000
-    annotateSpan "log1" $ logValue ("abc" :: Text)
-    annotateSpan "tag1" $ tagTextValue "def"
-  childSpan "B" $ liftIO $ threadDelay 30000
-
-simple :: MonadTrace m => m ()
-simple = do
-  annotateSpan "TEST_LOG0" $ logValue ("foo" :: Text)
-  annotateSpan "TEST_TAG0" $ tagDoubleValue 123
-  childSpan "nested1" $ annotateSpan "TEST_TAG1" $ tagInt64Value 12
-  childSpan "nested2" $ do
-    annotateSpan "TEST_TAG2" $ tagDoubleValue 12.5
-    childSpan "nestednsted" $ annotateSpan "TEST_TAG3" $ tagInt64Value (-5)
+  Zipkin.localSpan "A" $ do
+    void $ tracedFork $ Zipkin.localSpan "aa" $ do
+      liftIO $ threadDelay 20000
+      Zipkin.annotate "log1"
+      Zipkin.tag "tag1" "def"
+    liftIO $ threadDelay 10000
+  Zipkin.localSpan "B" $ liftIO $ threadDelay 30000
 
 main :: IO ()
 main = do
-  tracer <- startTracer stdoutPublisher
-  trace simple tracer "root"
-  trace doSomething tracer "root" { builderBaggages = Map.singleton "foo" "bar" }
-  stopTracer tracer
+  zipkin <- Zipkin.new $ Zipkin.defaultSettings
+    { Zipkin.settingsEndpoint = Just $ Zipkin.endpoint
+      { Zipkin.endpointService = Just "print-spans"
+      , Zipkin.endpointPort = Just 1234
+      , Zipkin.endpointIPv4 = Just IPv4.localhost
+      }
+    , Zipkin.settingsHost = "localhost"
+    }
+  Zipkin.run zipkin example1
+  Zipkin.run zipkin example2
+  Zipkin.flush zipkin

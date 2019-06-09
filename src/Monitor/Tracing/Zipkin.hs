@@ -4,15 +4,29 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
-{-| <https://zipkin.apache.org/ Zipkin> trace publisher. -}
+-- | This module implements a <https://zipkin.apache.org/ Zipkin>-powered trace publisher. You will
+-- almost certainly want to import it qualified.
 module Monitor.Tracing.Zipkin (
-  -- * Set up the trace collector
+  -- * Configuration
+  -- ** General settings
+  Settings, defaultSettings, settingsHostname, settingsPort, settingsManager, settingsEndpoint,
+  settingsPublishPeriod,
+  -- ** Endpoint
+  Endpoint, defaultEndpoint, endpointService, endpointPort, endpointIPv4, endpointIPv6,
+
+  -- * Publishing traces
   Zipkin,
-  new, Settings(..), defaultSettings, Endpoint(..), defaultEndpoint,
-  run, publish, with,
-  -- * Record cross-process spans
-  B3, b3FromHeaders, b3ToHeaders, clientSpan, serverSpan, producerSpan, consumerSpan,
-  -- * Add metadata
+  new, run, publish, with,
+
+  -- * Cross-process spans
+  --
+  -- ** Communication
+  B3, b3ToHeaders, b3FromHeaders, b3ToHeaderValue, b3FromHeaderValue,
+
+  -- ** Span generation
+  clientSpan, serverSpan, producerSpan, consumerSpan,
+
+  -- * Custom metadata
   tag, annotate, annotateAt
 ) where
 
@@ -25,7 +39,9 @@ import Control.Monad (forever, guard, void, when)
 import Control.Monad.Fix (fix)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import qualified Data.Aeson as JSON
+import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
+import Data.CaseInsensitive (CI)
 import Data.Time.Clock (NominalDiffTime)
 import Data.Foldable (toList)
 import Data.Int (Int64)
@@ -35,8 +51,10 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe, maybe, maybeToList)
 import Data.Monoid ((<>), Endo(..))
 import Data.Set (Set)
+import Data.String (IsString(..))
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
 import Data.Time.Clock.POSIX (POSIXTime)
 import Net.IPv4 (IPv4)
 import Net.IPv6 (IPv6)
@@ -46,24 +64,32 @@ import Network.Socket (HostName, PortNumber)
 import UnliftIO (MonadUnliftIO)
 import UnliftIO.Exception (finally)
 
--- | Zipkin creating settings.
+-- | 'Zipkin' creation settings. Note that its constructor is not exposed to allow backwards
+-- compatible evolution; 'Settings' should instead be created either via 'defaultSettings' or its
+-- 'IsString' instance.
 data Settings = Settings
   { settingsHostname :: !(Maybe HostName)
-  -- ^ The Zipkin server's hostname.
+  -- ^ The Zipkin server's hostname, defaults to @localhost@ if unset.
   , settingsPort :: !(Maybe PortNumber)
-  -- ^ The port the Zipkin server is listening on.
+  -- ^ The port the Zipkin server is listening on, defaults to @9411@ if unset.
   , settingsEndpoint :: !(Maybe Endpoint)
-  -- ^ Local endpoint used for all published spans.
+  -- ^ Local endpoint included in all published spans.
   , settingsManager :: !(Maybe Manager)
   -- ^ An optional HTTP manager to use for publishing spans on the Zipkin server.
   , settingsPublishPeriod :: !(Maybe NominalDiffTime)
   -- ^ If set to a positive value, traces will be flushed in the background every such period.
   }
 
--- | Creates 'Settings' pointing to a Zikpin server at host @"localhost"@ and port @9411@, without
--- background flushing.
+-- | Creates empty 'Settings'. You will typically use this (or the 'IsString' instance) as starting
+-- point to only fill in the fields you care about:
+--
+-- > let settings = defaultSettings { settingsPort = Just 2222 }
 defaultSettings :: Settings
 defaultSettings = Settings Nothing Nothing Nothing Nothing Nothing
+
+-- | Generates settings with the given string as hostname.
+instance IsString Settings where
+  fromString s = defaultSettings { settingsHostname = Just s }
 
 -- | A Zipkin trace publisher.
 data Zipkin = Zipkin
@@ -82,8 +108,9 @@ flushSpans ept tracer req mgr = do
       when (spanIsSampled spn) $ modifyIORef ref (ZipkinSpan ept spn tags logs itv:)
       loop
   spns <- readIORef ref
-  let req' = req { HTTP.requestBody = HTTP.RequestBodyLBS $ JSON.encode spns }
-  void $ HTTP.httpLbs req' mgr
+  when (not $ null spns) $ do
+    let req' = req { HTTP.requestBody = HTTP.RequestBodyLBS $ JSON.encode spns }
+    void $ HTTP.httpLbs req' mgr
 
 -- | Creates a 'Zipkin' publisher for the input 'Settings'.
 new :: MonadIO m => Settings -> m Zipkin
@@ -136,21 +163,22 @@ annotateAt time val = addSpanEntry "" (logValueAt time val)
 data B3 = B3
   { b3TraceID :: !TraceID
   , b3SpanID :: !SpanID
-  , b3ParentSpanID :: !(Maybe SpanID)
   , b3IsSampled :: !Bool
   , b3IsDebug :: !Bool
-  } deriving (Eq, Show)
+  , b3ParentSpanID :: !(Maybe SpanID)
+  } deriving (Eq, Ord, Show)
 
-traceIDHeader, spanIDHeader, parentSpanIDHeader, sampledHeader, debugHeader :: Text
+traceIDHeader, spanIDHeader, parentSpanIDHeader, sampledHeader, debugHeader :: CI ByteString
 traceIDHeader = "X-B3-TraceId"
 spanIDHeader = "X-B3-SpanId"
 parentSpanIDHeader = "X-B3-ParentSpanId"
 sampledHeader = "X-B3-Sampled"
 debugHeader = "X-B3-Flags"
 
--- | Serializes the 'B3' to headers, suitable for HTTP requests.
-b3ToHeaders :: B3 -> Map Text Text
-b3ToHeaders (B3 traceID spanID mbParentID isSampled isDebug) =
+-- | Serializes the 'B3' to multiple headers, suitable for HTTP requests. All byte-strings are UTF-8
+-- encoded.
+b3ToHeaders :: B3 -> Map (CI ByteString) ByteString
+b3ToHeaders (B3 traceID spanID isSampled isDebug mbParentID) =
   let
     defaultKVs = [(traceIDHeader, encodeTraceID traceID), (spanIDHeader, encodeSpanID spanID)]
     parentKVs = (parentSpanIDHeader,) . encodeSpanID <$> maybeToList mbParentID
@@ -158,13 +186,13 @@ b3ToHeaders (B3 traceID spanID mbParentID isSampled isDebug) =
       (_, True) -> [(debugHeader, "1")]
       (True, _) -> [(sampledHeader, "1")]
       (False, _) -> [(sampledHeader, "0")]
-  in Map.fromList $ defaultKVs ++ parentKVs ++ sampledKVs
+  in fmap T.encodeUtf8 $ Map.fromList $ defaultKVs ++ parentKVs ++ sampledKVs
 
--- | Deserializes the 'B3' from headers.
-b3FromHeaders :: Map Text Text -> Maybe B3
+-- | Deserializes the 'B3' from multiple headers.
+b3FromHeaders :: Map (CI ByteString) ByteString -> Maybe B3
 b3FromHeaders hdrs = do
   let
-    find key = Map.lookup key hdrs
+    find key = T.decodeUtf8 <$> Map.lookup key hdrs
     findBool def key = case find key of
       Nothing -> Just def
       Just "1" -> Just True
@@ -176,24 +204,50 @@ b3FromHeaders hdrs = do
   B3
     <$> (find traceIDHeader >>= decodeTraceID)
     <*> (find spanIDHeader >>= decodeSpanID)
-    <*> maybe (pure Nothing) (Just <$> decodeSpanID) (find parentSpanIDHeader)
     <*> pure sampled
     <*> pure dbg
+    <*> maybe (pure Nothing) (Just <$> decodeSpanID) (find parentSpanIDHeader)
 
-instance JSON.FromJSON B3 where
-  parseJSON = JSON.withObject "B3" $ \v -> do
-    hdrs <- JSON.parseJSON (JSON.Object v)
-    maybe (fail "bad input") pure $ b3FromHeaders hdrs
+-- | Serializes the 'B3' to a single UTF-8 encoded header value. It will typically be set as
+-- <https://github.com/apache/incubator-zipkin-b3-propagation#single-header b3 header>.
+b3ToHeaderValue :: B3 -> ByteString
+b3ToHeaderValue (B3 traceID spanID isSampled isDebug mbParentID) =
+  let
+    state = case (isSampled, isDebug) of
+      (_ , True) -> "d"
+      (True, _) -> "1"
+      (False, _) -> "0"
+    required = [encodeTraceID traceID, encodeSpanID spanID, state]
+    optional = encodeSpanID <$> maybeToList mbParentID
+  in BS.intercalate "-" $ fmap T.encodeUtf8 $ required ++ optional
 
-instance JSON.ToJSON B3 where
-  toJSON = JSON.toJSON . b3ToHeaders
+-- | Deserializes a single header value into a 'B3'.
+b3FromHeaderValue :: ByteString -> Maybe B3
+b3FromHeaderValue bs = case T.splitOn "-" $ T.decodeUtf8 bs of
+  (traceIDstr:spanIDstr:strs) -> do
+    traceID <- decodeTraceID traceIDstr
+    spanID <- decodeSpanID spanIDstr
+    let buildB3 = B3 traceID spanID
+    case strs of
+      [] -> pure $ buildB3 False False Nothing
+      (state:strs') -> do
+        buildB3' <- case state of
+          "0" -> pure $ buildB3 False False
+          "1" -> pure $ buildB3 True False
+          "d" -> pure $ buildB3 True True
+          _ -> Nothing
+        case strs' of
+          [] -> pure $ buildB3' Nothing
+          [str] -> buildB3' . Just <$> decodeSpanID str
+          _ -> Nothing
+  _ -> Nothing
 
 b3FromSpan :: Span -> B3
 b3FromSpan s =
   let
     ctx = spanContext s
     refs = spanReferences s
-  in B3 (contextTraceID ctx) (contextSpanID ctx) (parentID refs) (spanIsSampled s) (spanIsDebug s)
+  in B3 (contextTraceID ctx) (contextSpanID ctx) (spanIsSampled s) (spanIsDebug s) (parentID refs)
 
 -- Builder endos
 
@@ -233,7 +287,12 @@ outgoingSpan kind mbEpt name f = childSpanWith (appEndo endo) name actn where
     Just spn -> f $ Just $ b3FromSpan spn
 
 -- | Generates a child span with @CLIENT@ kind. This function also provides the corresponding 'B3'
--- so that it can be forwarded to the server.
+-- (or 'Nothing' if tracing is inactive) so that it can be forwarded to the server. For example, to
+-- emit an HTTP request and forward the trace information in the headers:
+--
+-- > clientSpan "api-call" $ \(Just b3) -> $ do
+-- >   res <- httpLbs "http://host/api" { requestHeaders = b3ToHeaders b3 }
+-- >   process res -- Do something with the response.
 clientSpan :: MonadTrace m => Maybe Endpoint -> Name -> (Maybe B3 -> m a) -> m a
 clientSpan = outgoingSpan "CLIENT"
 
@@ -249,7 +308,8 @@ incomingSpan kind mbEpt b3 actn =
     bldr = appEndo endo $ builder ""
   in trace bldr actn
 
--- | Generates a child span with @SERVER@ kind. The client's 'B3' should be provided as input.
+-- | Generates a child span with @SERVER@ kind. The client's 'B3' should be provided as input,
+-- for example parsed using 'b3FromRequestHeaders'.
 serverSpan :: MonadTrace m => Maybe Endpoint -> B3 -> m a -> m a
 serverSpan = incomingSpan "SERVER"
 
@@ -257,17 +317,25 @@ serverSpan = incomingSpan "SERVER"
 consumerSpan :: MonadTrace m => Maybe Endpoint -> B3 -> m a -> m a
 consumerSpan = incomingSpan "CONSUMER"
 
--- | Information about a hosted service.
+-- | Information about a hosted service, included in spans and visible in the Zipkin UI.
 data Endpoint = Endpoint
   { endpointService :: !(Maybe Text)
+  -- ^ The endpoint's service name.
   , endpointPort :: !(Maybe Int)
+  -- ^ The endpoint's port, if applicable and known.
   , endpointIPv4 :: !(Maybe IPv4)
+  -- ^ The endpoint's IPv4 address.
   , endpointIPv6 :: !(Maybe IPv6)
+  -- ^ The endpoint's IPv6 address.
   } deriving (Eq, Ord, Show)
 
 -- | An empty endpoint.
 defaultEndpoint :: Endpoint
 defaultEndpoint = Endpoint Nothing Nothing Nothing Nothing
+
+-- | Generates an endpoint with the given string as service.
+instance IsString Endpoint where
+  fromString s = defaultEndpoint { endpointService = Just (T.pack s) }
 
 instance JSON.ToJSON Endpoint where
   toJSON (Endpoint mbSvc mbPort mbIPv4 mbIPv6) = JSON.object $ catMaybes

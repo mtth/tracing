@@ -4,7 +4,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-} -- For the MonadReader instance.
 
--- | The 'TraceT' class.
+-- | This module is useful for tracing backend implementors. If you are only interested in adding
+-- tracing to an application, start at "Monitor.Tracing".
 module Control.Monad.Trace (
   TraceT, runTraceT,
   Tracer(..),
@@ -49,7 +50,9 @@ data Interval = Interval
 -- | A tracer collects spans emitted inside 'TraceT'.
 data Tracer = Tracer
   { tracerChannel :: TChan (Span, Tags, Logs, Interval)
+  -- ^ Channel spans get written to when they complete.
   , tracerPendingCount :: TVar Int
+  -- ^ The number of spans currently in flight (started but not yet completed).
   }
 
 -- | Creates a new 'Tracer'.

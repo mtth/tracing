@@ -1,7 +1,7 @@
 -- | This module is where you should start if you are interested in adding tracing to an
 -- application. It provides backend-agnostic utilities to generate traces. Trace publication and
 -- other backend-specific features are available in the modules below @Monitor.Tracing@ (e.g.
--- 'Monitor.Tracing.Zipkin'). The additional functionality exposed under @Control.Monad@ in this
+-- "Monitor.Tracing.Zipkin"). The additional functionality exposed under @Control.Monad@ in this
 -- package is useful if you wish to implement a new tracing backend.
 module Monitor.Tracing (
   -- * Overview

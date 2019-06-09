@@ -6,6 +6,7 @@
 import Control.Monad.Trace
 import Control.Monad.Trace.Class
 import Monitor.Tracing
+import qualified Monitor.Tracing.Zipkin as ZPK
 
 import Control.Concurrent
 import Control.Concurrent.STM (atomically, tryReadTChan)
@@ -14,6 +15,7 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (MonadReader, Reader, ReaderT, ask, runReader, runReaderT)
 import Control.Monad.State.Strict (MonadState, StateT, evalStateT, get)
 import Data.IORef
+import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Test.Hspec
 import Test.Hspec.QuickCheck
@@ -56,3 +58,20 @@ main = hspec $ do
           trace (builder name) $ pure ()
       spans <- runReaderT (collectSpans @(ReaderT Text IO) actn) "foo"
       fmap spanName spans `shouldBe` ["foo", "t"]
+  describe "Zipkin" $ do
+    it "should round-trip a B3 using a single header" $ do
+      let
+        bs = "80f198ee56343ba864fe8b2a57d3eff7-e457b5a2e4d86bd1-1-05e3ac9a4f6e3b90"
+        mbBs = ZPK.b3ToHeaderValue <$> ZPK.b3FromHeaderValue bs
+      mbBs `shouldBe` Just bs
+    it "should have equivalent B3 header representations" $ do
+      let
+        bs = "80f198ee56343ba864fe8b2a57d3eff7-e457b5a2e4d86bd1-1-05e3ac9a4f6e3b90"
+        hdrs = Map.fromList
+          [ ("X-B3-TraceId", "80f198ee56343ba864fe8b2a57d3eff7")
+          , ("X-B3-SpanId", "e457b5a2e4d86bd1")
+          , ("X-B3-ParentSpanId", "05e3ac9a4f6e3b90")
+          , ("X-B3-Sampled", "1") ]
+        Just b3 = ZPK.b3FromHeaderValue bs
+        Just b3' = ZPK.b3FromHeaders hdrs
+      b3 `shouldBe` b3'

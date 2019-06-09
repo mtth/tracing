@@ -1,4 +1,5 @@
 {-# LANGUAGE DefaultSignatures #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
@@ -6,6 +7,8 @@
 module Control.Monad.Trace.Class (
   MonadTrace(..),
   Builder(..), Name, SpanID, TraceID, Reference(..), builder,
+  Sampling, alwaysSampled, neverSampled, sampledEvery, sampledWhen, debugEnabled,
+  rootSpan, rootSpanWith, childSpan, childSpanWith,
   Span(..), Context(..),
   Key, Value, tagDoubleValue, tagInt64Value, tagTextValue, logValue, logValueAt
 ) where
@@ -107,14 +110,62 @@ data Builder = Builder
   -- ^ Initial set of tags.
   , builderBaggages :: !(Map Key ByteString)
   -- ^ Span context baggages.
+  , builderSampling :: !(Maybe Sampling)
+  -- ^ How the span should be sampled. If unset, the active's span sampling will be used if present,
+  -- otherwise the span will not be sampled.
   } deriving Show
 
 -- | Returns a 'Builder' with the given input as name and all other fields empty.
 builder :: Name -> Builder
-builder name = Builder name Nothing Nothing Set.empty Map.empty Map.empty
+builder name = Builder name Nothing Nothing Set.empty Map.empty Map.empty Nothing
 
 instance IsString Builder where
   fromString = builder . T.pack
+
+alwaysSampled :: Sampling
+alwaysSampled = Always
+
+neverSampled :: Sampling
+neverSampled = Never
+
+debugEnabled :: Sampling
+debugEnabled = Debug
+
+sampledEvery :: Int -> Sampling
+sampledEvery n = WithProbability (1 / fromIntegral n)
+
+sampledWhen :: Bool -> Sampling
+sampledWhen b = if b then Always else Never
+
+-- Generic span creation
+
+-- | Starts a new trace, customizing the span builder. Note that the sampling input will override
+-- any sampling customization set on the builder.
+rootSpanWith :: MonadTrace m => (Builder -> Builder) -> Sampling -> Name -> m a -> m a
+rootSpanWith f sampling name = trace $ (f $ builder name) { builderSampling = Just sampling }
+
+-- | Starts a new trace.
+rootSpan :: MonadTrace m => Sampling -> Name -> m a -> m a
+rootSpan = rootSpanWith id
+
+-- | Extends a trace if it is active, otherwise do nothing. The active span's ID will be added as a
+-- reference to the new span and it will share the same trace ID (overriding any customization done
+-- to the builder).
+childSpanWith :: MonadTrace m => (Builder -> Builder) -> Name -> m a -> m a
+childSpanWith f name actn = activeSpan >>= \case
+  Nothing -> actn
+  Just spn -> do
+    let
+      ctx = spanContext spn
+      bldr = (f $ builder name)
+      bldr' = bldr
+        { builderTraceID = Just $ contextTraceID ctx
+        , builderReferences = Set.insert (ChildOf $ contextSpanID ctx) (builderReferences bldr) }
+    trace bldr' actn
+
+-- | Extends a trace if it is active, otherwise do nothing.
+childSpan :: MonadTrace m => Name -> m a -> m a
+childSpan = childSpanWith id
 
 -- Writing metadata
 

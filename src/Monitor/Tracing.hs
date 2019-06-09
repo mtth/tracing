@@ -31,12 +31,18 @@ pattern when using this library is to import this module unqualified and the bac
 qualified. For example:
 
 > import Monitor.Tracing
-> import qualified Monitor.Tracing.Zipkin as Zipkin
+> import qualified Monitor.Tracing.Zipkin as ZPK
 
 -}
 module Monitor.Tracing (
   -- * Overview
-  MonadTrace
+  MonadTrace,
+  -- * Generic span creation
+  Sampling, alwaysSampled, neverSampled, sampledEvery, sampledWhen, debugEnabled,
+  rootSpan, rootSpanWith, childSpan, childSpanWith,
+  -- * Backends
+  Zipkin
 ) where
 
 import Control.Monad.Trace.Class
+import Monitor.Tracing.Zipkin (Zipkin)

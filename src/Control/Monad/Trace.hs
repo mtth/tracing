@@ -31,6 +31,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Time.Clock (NominalDiffTime)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
+import System.Random (randomRIO)
 import UnliftIO (MonadUnliftIO, UnliftIO(..), askUnliftIO, withRunInIO, withUnliftIO)
 
 -- | A collection of span tags.
@@ -74,8 +75,19 @@ instance MonadUnliftIO m => MonadTrace (TraceT m) where
   trace bldr (TraceT reader) = TraceT $ do
     parentScope <- ask
     let
-      mbParentCtx = spanContext <$> scopeSpan parentScope
+      mbParentSpn = scopeSpan parentScope
+      mbParentCtx = spanContext <$> mbParentSpn
       mbTraceID = contextTraceID <$> mbParentCtx
+      mbSampling = builderSampling bldr
+      isDebug = fromMaybe False $ ((== Debug) <$> mbSampling) <|> (spanIsDebug <$> mbParentSpn)
+    isSampled <- case mbSampling of
+      Just Debug -> pure True
+      Just Always -> pure True
+      Just Never -> pure False
+      Just (WithProbability r) -> do
+        r' <- liftIO $ randomRIO (0, 1)
+        pure $ r' < r
+      Nothing -> pure $ maybe False spanIsSampled mbParentSpn
     spanID <- maybe (liftIO randomSpanID) pure $ builderSpanID bldr
     traceID <- maybe (liftIO randomTraceID) pure $ builderTraceID bldr <|> mbTraceID
     tagsTV <- liftIO $ newTVarIO $ builderTags bldr
@@ -83,7 +95,7 @@ instance MonadUnliftIO m => MonadTrace (TraceT m) where
     let
       baggages = fromMaybe Map.empty $ contextBaggages <$> mbParentCtx
       ctx = Context traceID spanID (builderBaggages bldr `Map.union` baggages)
-      spn = Span (builderName bldr) ctx (builderReferences bldr)
+      spn = Span (builderName bldr) ctx (builderReferences bldr) isSampled isDebug
       tracer = scopeTracer parentScope
       childScope = Scope tracer (Just spn) (Just tagsTV) (Just logsTV)
     withRunInIO $ \run -> do

@@ -6,6 +6,7 @@ module Control.Monad.Trace.Internal (
   Context(..),
   Name,
   Span(..),
+  Sampling(..),
   Reference(..),
   Key, Value(..)
 ) where
@@ -93,7 +94,17 @@ data Span = Span
   { spanName :: !Name
   , spanContext :: !Context
   , spanReferences :: !(Set Reference)
+  , spanIsSampled :: !Bool
+  , spanIsDebug :: !Bool
   }
+
+-- | A trace sampling strategy.
+data Sampling
+  = Always
+  | Never
+  | Debug
+  | WithProbability Double
+  deriving (Eq, Show)
 
 randomID :: Int -> IO ByteString
 randomID len = BS.pack <$> replicateM len randomIO

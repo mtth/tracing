@@ -9,8 +9,6 @@ module Monitor.Tracing.Zipkin (
   Zipkin,
   new, Settings(..), defaultSettings, Endpoint(..), defaultEndpoint,
   run, publish, with,
-  -- * Record in-process spans
-  rootSpan, Sampling(..), localSpan,
   -- * Record cross-process spans
   B3, clientSpan, serverSpan, producerSpan, consumerSpan,
   -- * Add metadata
@@ -20,14 +18,12 @@ module Monitor.Tracing.Zipkin (
 import Control.Monad.Trace
 import Control.Monad.Trace.Class
 
-import Control.Applicative ((<|>))
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM (atomically, tryReadTChan)
 import Control.Monad (forever, void, when)
 import Control.Monad.Fix (fix)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import qualified Data.Aeson as JSON
-import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import Data.Time.Clock (NominalDiffTime)
 import Data.Foldable (toList)
@@ -38,7 +34,6 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe, maybe, maybeToList)
 import Data.Monoid (Endo(..))
 import Data.Set (Set)
-import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (POSIXTime)
@@ -83,7 +78,7 @@ flushSpans ept tracer req mgr = do
   fix $ \loop -> atomically (tryReadTChan $ tracerChannel tracer) >>= \case
     Nothing -> pure ()
     Just (spn, tags, logs, itv) -> do
-      when (isSampled spn) $ modifyIORef ref (ZipkinSpan ept spn tags logs itv:)
+      when (spanIsSampled spn) $ modifyIORef ref (ZipkinSpan ept spn tags logs itv:)
       loop
   spns <- readIORef ref
   let req' = req { HTTP.requestBody = HTTP.RequestBodyLBS $ JSON.encode spns }
@@ -110,8 +105,8 @@ new (Settings hostname port mbEpt mbMgr prd) = liftIO $ do
 -- | Runs a 'TraceT' action, sampling spans appropriately. Note that this method does not publish
 -- spans on its own; to do so, either call 'publish' manually or specify a positive
 -- 'settingsPublishPeriod' to publish in the background.
-run :: Zipkin -> TraceT m a -> m a
-run zipkin actn = runTraceT actn (zipkinTracer zipkin)
+run :: TraceT m a -> Zipkin -> m a
+run actn zipkin = runTraceT actn (zipkinTracer zipkin)
 
 -- | Flushes all complete spans to the Zipkin server. This method is thread-safe.
 publish :: MonadIO m => Zipkin -> m ()
@@ -141,23 +136,18 @@ data B3 = B3
   { b3TraceID :: !TraceID
   , b3SpanID :: !SpanID
   , b3ParentSpanID :: !(Maybe SpanID)
-  , b3Sampling :: !(Maybe Sampling)
+  , b3IsSampled :: !Bool
+  , b3IsDebug :: !Bool
   } deriving (Eq, Show)
 
 b3FromSpan :: Span -> B3
 b3FromSpan s =
   let
     ctx = spanContext s
-    samplingState = if fromMaybe False (lookupBoolBaggage debugKey ctx)
-      then Just Debug
-      else explicitSamplingState <$> lookupBoolBaggage samplingKey ctx
-  in B3 (contextTraceID ctx) (contextSpanID ctx) (parentID $ spanReferences s) samplingState
+    refs = spanReferences s
+  in B3 (contextTraceID ctx) (contextSpanID ctx) (parentID refs) (spanIsSampled s) (spanIsDebug s)
 
 -- Builder endos
-
-insertBaggage :: Key -> ByteString -> Endo Builder
-insertBaggage key val =
-  Endo $ \bldr -> bldr { builderBaggages = Map.insert key val (builderBaggages bldr) }
 
 insertTag :: JSON.ToJSON a => Key -> a -> Endo Builder
 insertTag key val =
@@ -166,49 +156,16 @@ insertTag key val =
 importB3 :: B3 -> Endo Builder
 importB3 b3 =
   let
-    baggages = Map.fromList $ case b3Sampling b3 of
-      Just Accept -> [(samplingKey, "1")]
-      Just Deny -> [(samplingKey, "0")]
-      Just Debug -> [(debugKey, "1")]
-      Nothing -> []
+    sampling = if b3IsDebug b3
+      then debugEnabled
+      else sampledWhen $ b3IsSampled b3
   in Endo $ \bldr -> bldr
     { builderTraceID = Just (b3TraceID b3)
     , builderSpanID = Just (b3SpanID b3)
-    , builderBaggages = baggages }
-
--- | The sampling applied to a trace.
---
--- Note that non-sampled traces still yield active spans. However these spans are not published to
--- Zipkin.
-data Sampling
-  = Accept
-  -- ^ Sample it.
-  | Debug
-  -- ^ Sample it and mark it as debug.
-  | Deny
-  -- ^ Do not sample it.
-  deriving (Eq, Ord, Enum, Show)
-
-applySampling :: Sampling -> Endo Builder
-applySampling Accept = insertBaggage samplingKey "1"
-applySampling Debug = insertBaggage debugKey "1"
-applySampling Deny = insertBaggage samplingKey "0"
-
-isSampled :: Span -> Bool
-isSampled spn =
-  let ctx = spanContext spn
-  in fromMaybe False $ lookupBoolBaggage debugKey ctx <|> lookupBoolBaggage samplingKey ctx
+    , builderSampling = Just sampling }
 
 publicKeyPrefix :: Text
 publicKeyPrefix = "Z."
-
--- Debug baggage key.
-debugKey :: Key
-debugKey = "z.d"
-
--- Sampling baggage key.
-samplingKey :: Key
-samplingKey = "z.s"
 
 -- Remote endpoint tag key.
 endpointKey :: Key
@@ -220,27 +177,8 @@ kindKey = "z.k"
 
 -- Internal keys
 
--- | Starts a new trace.
-rootSpan :: MonadTrace m => Sampling -> Name -> m a -> m a
-rootSpan sampling name = trace $ appEndo (applySampling sampling) $ builder name
-
-childSpan :: MonadTrace m => Endo Builder -> Name -> m a -> m a
-childSpan endo name actn = activeSpan >>= \case
-  Nothing -> actn
-  Just spn -> do
-    let
-      ctx = spanContext spn
-      bldr = (builder name)
-        { builderTraceID = Just $ contextTraceID ctx
-        , builderReferences = Set.singleton (ChildOf $ contextSpanID ctx) }
-    trace (appEndo endo $ bldr) actn
-
--- | Continues an existing trace if present, otherwise does nothing.
-localSpan :: MonadTrace m => Name -> m a -> m a
-localSpan = childSpan mempty
-
 outgoingSpan :: MonadTrace m => Text -> Maybe Endpoint -> Name -> (Maybe B3 -> m a) -> m a
-outgoingSpan kind mbEpt name f = childSpan endo name actn where
+outgoingSpan kind mbEpt name f = childSpanWith (appEndo endo) name actn where
   endo = insertTag kindKey kind <> maybe mempty (insertTag endpointKey) mbEpt
   actn = activeSpan >>= \case
     Nothing -> f Nothing
@@ -284,16 +222,6 @@ instance JSON.ToJSON Endpoint where
     , ("ipv4" JSON..=) <$> mbIPv4
     , ("ipv6" JSON..=) <$> mbIPv6 ]
 
-explicitSamplingState :: Bool -> Sampling
-explicitSamplingState True = Accept
-explicitSamplingState False = Deny
-
-lookupBoolBaggage :: Key -> Context -> Maybe Bool
-lookupBoolBaggage key ctx = Map.lookup key (contextBaggages ctx) >>= \case
-  "0" -> Just False
-  "1" -> Just True
-  _ -> Nothing
-
 parentID :: Set Reference -> Maybe SpanID
 parentID = listToMaybe . catMaybes . fmap go . toList where
   go (ChildOf d) = Just d
@@ -309,28 +237,24 @@ debugHeader = "X-B3-Flags"
 instance JSON.FromJSON B3 where
   parseJSON = JSON.withObject "B3" $ \v -> do
     dbg <- v JSON..:! debugHeader JSON..!= False
-    state <- fmap explicitSamplingState <$> v JSON..:! sampledHeader
-    let
-      sampling = case (dbg, state) of
-        (False, s) -> pure s
-        (True, Nothing) -> pure (Just Debug)
-        _ -> fail "bad debug and sampling combination"
+    mbSampled <- v JSON..:! sampledHeader
+    when (mbSampled == Just False && dbg) $ fail "bad debug and sampling combination"
     B3
       <$> v JSON..: traceIDHeader
       <*> v JSON..: spanIDHeader
       <*> v JSON..:! parentSpanIDHeader
-      <*> sampling
+      <*> pure (fromMaybe dbg mbSampled)
+      <*> pure dbg
 
 instance JSON.ToJSON B3 where
-  toJSON (B3 traceID spanID mbParentID state) =
+  toJSON (B3 traceID spanID mbParentID isSampled isDebug) =
     let
       defaultKVs = [traceIDHeader JSON..= traceID, spanIDHeader JSON..= spanID]
       parentKVs = (parentSpanIDHeader JSON..=) <$> maybeToList mbParentID
-      sampledKVs = case state of
-        Nothing -> []
-        Just Debug -> [debugHeader JSON..= ("1" :: Text)]
-        Just Accept -> [sampledHeader JSON..= ("1" :: Text)]
-        Just Deny -> [sampledHeader JSON..= ("0" :: Text)]
+      sampledKVs = case (isSampled, isDebug) of
+        (_, True) -> [debugHeader JSON..= ("1" :: Text)]
+        (True, _) -> [sampledHeader JSON..= ("1" :: Text)]
+        (False, _) -> [sampledHeader JSON..= ("0" :: Text)]
     in JSON.object $ defaultKVs ++ parentKVs ++ sampledKVs
 
 data ZipkinAnnotation = ZipkinAnnotation !POSIXTime !JSON.Value
@@ -360,7 +284,7 @@ instance JSON.ToJSON ZipkinSpan where
         , "id" JSON..= contextSpanID ctx
         , "timestamp" JSON..= microSeconds @Int64 (intervalStart itv)
         , "duration" JSON..= microSeconds @Int64 (intervalDuration itv)
-        , "debug" JSON..= fromMaybe False (lookupBoolBaggage debugKey ctx)
+        , "debug" JSON..= spanIsDebug spn
         , "tags" JSON..= publicTags tags
         , "annotations" JSON..= fmap (\(t, _, v) -> ZipkinAnnotation t v) logs ]
       optionalKVs = catMaybes

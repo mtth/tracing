@@ -1,4 +1,4 @@
-# Distributed tracing
+# Tracing
 
 An [OpenTracing](https://opentracing.io/)-compliant, simple, and extensible
 distributed tracing library.
@@ -9,6 +9,8 @@ distributed tracing library.
   your own.
 
 ```haskell
+import Monitor.Tracing
+
 -- A traced action with its root span and two children.
 run :: MonadTrace m => m ()
 run = rootSpan (sampledEvery 10) do
@@ -17,4 +19,5 @@ run = rootSpan (sampledEvery 10) do
 ```
 
 To learn more, hop on over to
-[`Monitor.Tracing`](https://hackage.haskell.org/package/tracing/docs/Monitor-Tracing.html).
+[`Monitor.Tracing`](https://hackage.haskell.org/package/tracing/docs/Monitor-Tracing.html),
+or take a look at examples in the `app/` folder.

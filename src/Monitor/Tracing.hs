@@ -49,7 +49,7 @@ module Monitor.Tracing (
   rootSpan, childSpan,
 
   -- * Backends
-  -- | As a convenience, the top-level type for each backed is exported here.
+  -- | As a convenience, the top-level type for each backend is exported here.
   Zipkin
 ) where
 

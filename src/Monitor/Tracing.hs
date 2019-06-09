@@ -36,20 +36,7 @@ qualified. For example:
 -}
 module Monitor.Tracing (
   -- * Overview
-  MonadTrace, tracedForkIO,
-  -- * Convenience exports
-  MonadIO, liftIO, MonadUnliftIO, withRunInIO
+  MonadTrace
 ) where
 
 import Control.Monad.Trace.Class
-
-import Control.Concurrent (forkIO, ThreadId)
-import Control.Monad.IO.Class (MonadIO, liftIO)
-import UnliftIO (MonadUnliftIO, withRunInIO)
-
--- | Starts a new span inside a new thread, returning the newly created thread's ID.
---
--- This convenience method around 'forkIO' and 'withRunInIO' is provided since getting insights into
--- concurrent calls is one of the main benefits of tracing.
-tracedForkIO :: (MonadTrace m, MonadUnliftIO m) => m () -> m ThreadId
-tracedForkIO actn = withRunInIO $ \run -> forkIO $ run actn

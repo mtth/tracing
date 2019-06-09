@@ -3,10 +3,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 
-{-| Zipkin trace publisher. -}
+{-| <https://zipkin.apache.org/ Zipkin> trace publisher. -}
 module Monitor.Tracing.Zipkin (
   -- * Set up the trace collector
-  Zipkin, new, Settings(..), defaultSettings, Endpoint(..), defaultEndpoint, run, publish,
+  Zipkin,
+  new, Settings(..), defaultSettings, Endpoint(..), defaultEndpoint,
+  run, publish, with,
   -- * Record in-process spans
   rootSpan, Sampling(..), localSpan,
   -- * Record cross-process spans
@@ -26,6 +28,7 @@ import Control.Monad.Fix (fix)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import qualified Data.Aeson as JSON
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Char8 as BS
 import Data.Time.Clock (NominalDiffTime)
 import Data.Foldable (toList)
 import Data.Int (Int64)
@@ -43,17 +46,20 @@ import Net.IPv4 (IPv4)
 import Net.IPv6 (IPv6)
 import Network.HTTP.Client (Manager, Request)
 import qualified Network.HTTP.Client as HTTP
+import Network.Socket (HostName, PortNumber)
+import UnliftIO (MonadUnliftIO)
+import UnliftIO.Exception (finally)
 
 -- | Zipkin creating settings.
 data Settings = Settings
-  { settingsManager :: !(Maybe Manager)
-  -- ^ An optional HTTP manager to use for publishing spans on the Zipkin server.
-  , settingsHost :: !ByteString
-  -- ^ The Zipkin server host.
-  , settingsPort :: !Int
+  { settingsHostname :: !HostName
+  -- ^ The Zipkin server's hostname.
+  , settingsPort :: !PortNumber
   -- ^ The port the Zipkin server is listening on.
   , settingsEndpoint :: !(Maybe Endpoint)
   -- ^ Local endpoint used for all published spans.
+  , settingsManager :: !(Maybe Manager)
+  -- ^ An optional HTTP manager to use for publishing spans on the Zipkin server.
   , settingsPublishPeriod :: !NominalDiffTime
   -- ^ If set to a positive value, traces will be flushed in the background every such period.
   }
@@ -61,7 +67,7 @@ data Settings = Settings
 -- | Creates 'Settings' pointing to a Zikpin server at host @"localhost"@ and port @9411@, without
 -- background flushing.
 defaultSettings :: Settings
-defaultSettings = Settings Nothing "localhost" 9411 Nothing 0
+defaultSettings = Settings "localhost" 9411 Nothing Nothing 0
 
 -- | A Zipkin trace publisher.
 data Zipkin = Zipkin
@@ -85,15 +91,15 @@ flushSpans ept tracer req mgr = do
 
 -- | Creates a 'Zipkin' publisher for the input 'Settings'.
 new :: MonadIO m => Settings -> m Zipkin
-new (Settings mbMgr host port mbEpt prd) = liftIO $ do
+new (Settings hostname port mbEpt mbMgr prd) = liftIO $ do
   mgr <- maybe (HTTP.newManager HTTP.defaultManagerSettings) pure mbMgr
   tracer <- newTracer
   let
     req = HTTP.defaultRequest
       { HTTP.method = "POST"
-      , HTTP.host = host
+      , HTTP.host = BS.pack hostname
       , HTTP.path = "/api/v2/spans"
-      , HTTP.port = port }
+      , HTTP.port = fromIntegral port }
   void $ if prd <= 0
     then pure Nothing
     else fmap Just $ forkIO $ forever $ do
@@ -111,6 +117,12 @@ run zipkin actn = runTraceT actn (zipkinTracer zipkin)
 publish :: MonadIO m => Zipkin -> m ()
 publish z =
   liftIO $ flushSpans (zipkinEndpoint z) (zipkinTracer z) (zipkinRequest z) (zipkinManager z)
+
+-- | Convenience method to start a 'Zipkin', run an action, and publish all spans before returning.
+with :: MonadUnliftIO m => Settings -> (Zipkin -> m a) -> m a
+with settings f = do
+  zipkin <- new settings
+  f zipkin `finally` publish zipkin
 
 -- | Adds a tag to the active span.
 tag :: MonadTrace m => Text -> Text -> m ()
@@ -328,6 +340,8 @@ instance JSON.ToJSON ZipkinAnnotation where
     [ "timestamp" JSON..= microSeconds @Int64 t
     , "value" JSON..= v ]
 
+-- Internal type used to encode spans in the <https://zipkin.apache.org/zipkin-api/#/ format>
+-- expected by Zipkin.
 data ZipkinSpan = ZipkinSpan !(Maybe Endpoint) !Span !Tags !Logs !Interval
 
 publicTags :: Tags -> Map Text JSON.Value

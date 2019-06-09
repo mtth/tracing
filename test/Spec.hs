@@ -42,10 +42,10 @@ main = hspec $ do
         v = runReader (evalStateT actn 1) 2
       v `shouldBe` 3
   describe "trace" $ do
-    it "should create a no spans when no traces are created" $ do
+    it "should not create spans when no traces are started" $ do
       spans <- collectSpans @IO (pure ())
       fmap spanName spans `shouldBe` []
-    it "should create a single span when no children are created" $ do
+    it "should collect a single span when no children are created" $ do
       spans <- collectSpans @IO (trace "t0" $ pure ())
       fmap spanName spans `shouldBe` ["t0"]
     it "should be able to stack on top of a ReaderT" $ do

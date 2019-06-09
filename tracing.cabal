@@ -1,5 +1,5 @@
 name:                tracing
-version:             0.0.1.2
+version:             0.0.2.1
 synopsis:            Distributed tracing
 description:         https://github.com/mtth/tracing
 homepage:            https://github.com/mtth/tracing

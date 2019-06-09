@@ -144,7 +144,9 @@ debugEnabled = Debug
 sampledEvery :: Int -> Sampling
 sampledEvery n = WithProbability (1 / fromIntegral n)
 
--- | Returns a 'Sampling' which samples a span iff the input is 'True'.
+-- | Returns a 'Sampling' which samples a span iff the input is 'True'. It is equivalent to:
+--
+-- > sampledWhen b = if b then alwaysSampled else neverSampled
 sampledWhen :: Bool -> Sampling
 sampledWhen b = if b then Always else Never
 

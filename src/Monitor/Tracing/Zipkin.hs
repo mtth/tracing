@@ -32,8 +32,8 @@ import Data.Int (Int64)
 import Data.IORef (modifyIORef, newIORef, readIORef)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (catMaybes, listToMaybe, maybe, maybeToList)
-import Data.Monoid (Endo(..))
+import Data.Maybe (catMaybes, fromMaybe, listToMaybe, maybe, maybeToList)
+import Data.Monoid ((<>), Endo(..))
 import Data.Set (Set)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -48,22 +48,22 @@ import UnliftIO.Exception (finally)
 
 -- | Zipkin creating settings.
 data Settings = Settings
-  { settingsHostname :: !HostName
+  { settingsHostname :: !(Maybe HostName)
   -- ^ The Zipkin server's hostname.
-  , settingsPort :: !PortNumber
+  , settingsPort :: !(Maybe PortNumber)
   -- ^ The port the Zipkin server is listening on.
   , settingsEndpoint :: !(Maybe Endpoint)
   -- ^ Local endpoint used for all published spans.
   , settingsManager :: !(Maybe Manager)
   -- ^ An optional HTTP manager to use for publishing spans on the Zipkin server.
-  , settingsPublishPeriod :: !NominalDiffTime
+  , settingsPublishPeriod :: !(Maybe NominalDiffTime)
   -- ^ If set to a positive value, traces will be flushed in the background every such period.
   }
 
 -- | Creates 'Settings' pointing to a Zikpin server at host @"localhost"@ and port @9411@, without
 -- background flushing.
 defaultSettings :: Settings
-defaultSettings = Settings "localhost" 9411 Nothing Nothing 0
+defaultSettings = Settings Nothing Nothing Nothing Nothing Nothing
 
 -- | A Zipkin trace publisher.
 data Zipkin = Zipkin
@@ -87,16 +87,16 @@ flushSpans ept tracer req mgr = do
 
 -- | Creates a 'Zipkin' publisher for the input 'Settings'.
 new :: MonadIO m => Settings -> m Zipkin
-new (Settings hostname port mbEpt mbMgr prd) = liftIO $ do
+new (Settings mbHostname mbPort mbEpt mbMgr mbPrd) = liftIO $ do
   mgr <- maybe (HTTP.newManager HTTP.defaultManagerSettings) pure mbMgr
   tracer <- newTracer
   let
     req = HTTP.defaultRequest
       { HTTP.method = "POST"
-      , HTTP.host = BS.pack hostname
+      , HTTP.host = BS.pack (fromMaybe "localhost" mbHostname)
       , HTTP.path = "/api/v2/spans"
-      , HTTP.port = fromIntegral port }
-  void $ if prd <= 0
+      , HTTP.port = maybe 9411 fromIntegral mbPort }
+  void $ let prd = fromMaybe 0 mbPrd in if prd <= 0
     then pure Nothing
     else fmap Just $ forkIO $ forever $ do
       threadDelay (microSeconds prd)
@@ -148,7 +148,7 @@ parentSpanIDHeader = "X-B3-ParentSpanId"
 sampledHeader = "X-B3-Sampled"
 debugHeader = "X-B3-Flags"
 
--- | Serialize the 'B3' to headers, suitable for HTTP requests.
+-- | Serializes the 'B3' to headers, suitable for HTTP requests.
 b3ToHeaders :: B3 -> Map Text Text
 b3ToHeaders (B3 traceID spanID mbParentID isSampled isDebug) =
   let
@@ -160,7 +160,7 @@ b3ToHeaders (B3 traceID spanID mbParentID isSampled isDebug) =
       (False, _) -> [(sampledHeader, "0")]
   in Map.fromList $ defaultKVs ++ parentKVs ++ sampledKVs
 
--- | Deserialize the 'B3' from headers.
+-- | Deserializes the 'B3' from headers.
 b3FromHeaders :: Map Text Text -> Maybe B3
 b3FromHeaders hdrs = do
   let

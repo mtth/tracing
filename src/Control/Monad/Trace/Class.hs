@@ -5,11 +5,17 @@
 
 -- | The 'MonadTrace' class
 module Control.Monad.Trace.Class (
+  -- * Generating traces
   MonadTrace(..),
-  Builder(..), Name, SpanID, TraceID, Reference(..), builder,
-  Sampling, alwaysSampled, neverSampled, sampledEvery, sampledWhen, debugEnabled,
-  rootSpan, rootSpanWith, childSpan, childSpanWith,
   Span(..), Context(..),
+  TraceID(..), encodeTraceID, decodeTraceID,
+  SpanID(..), encodeSpanID, decodeSpanID,
+  Reference(..),
+  rootSpan, rootSpanWith, childSpan, childSpanWith,
+  -- * Customizing spans
+  Builder(..), Name, builder,
+  Sampling, alwaysSampled, neverSampled, sampledEvery, sampledWhen, debugEnabled,
+  -- * Annotating spans
   Key, Value, tagDoubleValue, tagInt64Value, tagTextValue, logValue, logValueAt
 ) where
 
@@ -122,18 +128,23 @@ builder name = Builder name Nothing Nothing Set.empty Map.empty Map.empty Nothin
 instance IsString Builder where
   fromString = builder . T.pack
 
+-- | Returns a 'Sampling' which always samples.
 alwaysSampled :: Sampling
 alwaysSampled = Always
 
+-- | Returns a 'Sampling' which never samples.
 neverSampled :: Sampling
 neverSampled = Never
 
+-- | Returns a debug 'Sampling'. Debug spans are always sampled.
 debugEnabled :: Sampling
 debugEnabled = Debug
 
+-- | Returns a 'Sampling' which randomly samples one in every @n@ spans.
 sampledEvery :: Int -> Sampling
 sampledEvery n = WithProbability (1 / fromIntegral n)
 
+-- | Returns a 'Sampling' which samples a span iff the input is 'True'.
 sampledWhen :: Bool -> Sampling
 sampledWhen b = if b then Always else Never
 

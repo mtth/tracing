@@ -1,8 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Control.Monad.Trace.Internal (
-  TraceID(..), randomTraceID,
-  SpanID(..), randomSpanID,
+  TraceID(..), encodeTraceID, decodeTraceID, randomTraceID,
+  SpanID(..), encodeSpanID, decodeSpanID, randomSpanID,
   Context(..),
   Name,
   Span(..),
@@ -35,13 +35,21 @@ type Key = Text
 -- | A 128-bit trace identifier.
 newtype TraceID = TraceID ByteString deriving (Eq, Ord, Show)
 
+-- | Hex-encodes a trace ID.
+encodeTraceID :: TraceID -> Text
+encodeTraceID (TraceID bs) = hexEncode bs
+
+-- | Decodes a traced ID from a hex-encoded string.
+decodeTraceID :: Text -> Maybe TraceID
+decodeTraceID txt = case hexDecode txt of
+  Just bs | BS.length bs == 16 -> Just $ TraceID bs
+  _ -> Nothing
+
 instance JSON.FromJSON TraceID where
-  parseJSON = JSON.withText "TraceID" $ \t -> case hexDecode t of
-    Just bs | BS.length bs == 16 -> pure $ TraceID bs
-    _ -> fail "invalid hex-encoded trace ID"
+  parseJSON = JSON.withText "TraceID" $ maybe (fail "invalid hex-encoding") pure . decodeTraceID
 
 instance JSON.ToJSON TraceID where
-  toJSON (TraceID bs) = JSON.toJSON $ hexEncode bs
+  toJSON = JSON.toJSON . encodeTraceID
 
 -- | Generates a random trace ID.
 randomTraceID :: IO TraceID
@@ -50,13 +58,21 @@ randomTraceID = TraceID <$> randomID 16
 -- | A 64-bit span identifier.
 newtype SpanID = SpanID ByteString deriving (Eq, Ord, Show)
 
+-- | Hex-encodes a span ID.
+encodeSpanID :: SpanID -> Text
+encodeSpanID (SpanID bs) = hexEncode bs
+
+-- | Decodes a span ID from a hex-encoded string.
+decodeSpanID :: Text -> Maybe SpanID
+decodeSpanID txt = case hexDecode txt of
+  Just bs | BS.length bs == 8 -> Just $ SpanID bs
+  _ -> Nothing
+
 instance JSON.FromJSON SpanID where
-  parseJSON = JSON.withText "SpanID" $ \t -> case hexDecode t of
-    Just bs | BS.length bs == 8 -> pure $ SpanID bs
-    _ -> fail "invalid hex-encoded span ID"
+  parseJSON = JSON.withText "SpanID" $ maybe (fail "invalid hex-encoding") pure . decodeSpanID
 
 instance JSON.ToJSON SpanID where
-  toJSON (SpanID bs) = JSON.toJSON $ hexEncode bs
+  toJSON = JSON.toJSON . encodeSpanID
 
 -- | Generates a random span ID.
 randomSpanID :: IO SpanID

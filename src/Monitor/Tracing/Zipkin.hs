@@ -1,6 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeApplications #-}
 
 {-| <https://zipkin.apache.org/ Zipkin> trace publisher. -}
@@ -10,7 +11,7 @@ module Monitor.Tracing.Zipkin (
   new, Settings(..), defaultSettings, Endpoint(..), defaultEndpoint,
   run, publish, with,
   -- * Record cross-process spans
-  B3, clientSpan, serverSpan, producerSpan, consumerSpan,
+  B3, b3FromHeaders, b3ToHeaders, clientSpan, serverSpan, producerSpan, consumerSpan,
   -- * Add metadata
   tag, annotate, annotateAt
 ) where
@@ -20,7 +21,7 @@ import Control.Monad.Trace.Class
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM (atomically, tryReadTChan)
-import Control.Monad (forever, void, when)
+import Control.Monad (forever, guard, void, when)
 import Control.Monad.Fix (fix)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import qualified Data.Aeson as JSON
@@ -31,7 +32,7 @@ import Data.Int (Int64)
 import Data.IORef (modifyIORef, newIORef, readIORef)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (catMaybes, fromMaybe, listToMaybe, maybe, maybeToList)
+import Data.Maybe (catMaybes, listToMaybe, maybe, maybeToList)
 import Data.Monoid (Endo(..))
 import Data.Set (Set)
 import Data.Text (Text)
@@ -140,6 +141,53 @@ data B3 = B3
   , b3IsDebug :: !Bool
   } deriving (Eq, Show)
 
+traceIDHeader, spanIDHeader, parentSpanIDHeader, sampledHeader, debugHeader :: Text
+traceIDHeader = "X-B3-TraceId"
+spanIDHeader = "X-B3-SpanId"
+parentSpanIDHeader = "X-B3-ParentSpanId"
+sampledHeader = "X-B3-Sampled"
+debugHeader = "X-B3-Flags"
+
+-- | Serialize the 'B3' to headers, suitable for HTTP requests.
+b3ToHeaders :: B3 -> Map Text Text
+b3ToHeaders (B3 traceID spanID mbParentID isSampled isDebug) =
+  let
+    defaultKVs = [(traceIDHeader, encodeTraceID traceID), (spanIDHeader, encodeSpanID spanID)]
+    parentKVs = (parentSpanIDHeader,) . encodeSpanID <$> maybeToList mbParentID
+    sampledKVs = case (isSampled, isDebug) of
+      (_, True) -> [(debugHeader, "1")]
+      (True, _) -> [(sampledHeader, "1")]
+      (False, _) -> [(sampledHeader, "0")]
+  in Map.fromList $ defaultKVs ++ parentKVs ++ sampledKVs
+
+-- | Deserialize the 'B3' from headers.
+b3FromHeaders :: Map Text Text -> Maybe B3
+b3FromHeaders hdrs = do
+  let
+    find key = Map.lookup key hdrs
+    findBool def key = case find key of
+      Nothing -> Just def
+      Just "1" -> Just True
+      Just "0" -> Just False
+      _ -> Nothing
+  dbg <- findBool False debugHeader
+  sampled <- findBool dbg sampledHeader
+  guard (not $ sampled == False && dbg)
+  B3
+    <$> (find traceIDHeader >>= decodeTraceID)
+    <*> (find spanIDHeader >>= decodeSpanID)
+    <*> maybe (pure Nothing) (Just <$> decodeSpanID) (find parentSpanIDHeader)
+    <*> pure sampled
+    <*> pure dbg
+
+instance JSON.FromJSON B3 where
+  parseJSON = JSON.withObject "B3" $ \v -> do
+    hdrs <- JSON.parseJSON (JSON.Object v)
+    maybe (fail "bad input") pure $ b3FromHeaders hdrs
+
+instance JSON.ToJSON B3 where
+  toJSON = JSON.toJSON . b3ToHeaders
+
 b3FromSpan :: Span -> B3
 b3FromSpan s =
   let
@@ -184,9 +232,13 @@ outgoingSpan kind mbEpt name f = childSpanWith (appEndo endo) name actn where
     Nothing -> f Nothing
     Just spn -> f $ Just $ b3FromSpan spn
 
+-- | Generates a child span with @CLIENT@ kind. This function also provides the corresponding 'B3'
+-- so that it can be forwarded to the server.
 clientSpan :: MonadTrace m => Maybe Endpoint -> Name -> (Maybe B3 -> m a) -> m a
 clientSpan = outgoingSpan "CLIENT"
 
+-- | Generates a child span with @PRODUCER@ kind. This function also provides the corresponding 'B3'
+-- so that it can be forwarded to the consumer.
 producerSpan :: MonadTrace m => Maybe Endpoint -> Name -> (Maybe B3 -> m a) -> m a
 producerSpan = outgoingSpan "PRODUCER"
 
@@ -197,9 +249,11 @@ incomingSpan kind mbEpt b3 actn =
     bldr = appEndo endo $ builder ""
   in trace bldr actn
 
+-- | Generates a child span with @SERVER@ kind. The client's 'B3' should be provided as input.
 serverSpan :: MonadTrace m => Maybe Endpoint -> B3 -> m a -> m a
 serverSpan = incomingSpan "SERVER"
 
+-- | Generates a child span with @CONSUMER@ kind. The producer's 'B3' should be provided as input.
 consumerSpan :: MonadTrace m => Maybe Endpoint -> B3 -> m a -> m a
 consumerSpan = incomingSpan "CONSUMER"
 
@@ -226,36 +280,6 @@ parentID :: Set Reference -> Maybe SpanID
 parentID = listToMaybe . catMaybes . fmap go . toList where
   go (ChildOf d) = Just d
   go _ = Nothing
-
-traceIDHeader, spanIDHeader, parentSpanIDHeader, sampledHeader, debugHeader :: Text
-traceIDHeader = "X-B3-TraceId"
-spanIDHeader = "X-B3-SpanId"
-parentSpanIDHeader = "X-B3-ParentSpanId"
-sampledHeader = "X-B3-Sampled"
-debugHeader = "X-B3-Flags"
-
-instance JSON.FromJSON B3 where
-  parseJSON = JSON.withObject "B3" $ \v -> do
-    dbg <- v JSON..:! debugHeader JSON..!= False
-    mbSampled <- v JSON..:! sampledHeader
-    when (mbSampled == Just False && dbg) $ fail "bad debug and sampling combination"
-    B3
-      <$> v JSON..: traceIDHeader
-      <*> v JSON..: spanIDHeader
-      <*> v JSON..:! parentSpanIDHeader
-      <*> pure (fromMaybe dbg mbSampled)
-      <*> pure dbg
-
-instance JSON.ToJSON B3 where
-  toJSON (B3 traceID spanID mbParentID isSampled isDebug) =
-    let
-      defaultKVs = [traceIDHeader JSON..= traceID, spanIDHeader JSON..= spanID]
-      parentKVs = (parentSpanIDHeader JSON..=) <$> maybeToList mbParentID
-      sampledKVs = case (isSampled, isDebug) of
-        (_, True) -> [debugHeader JSON..= ("1" :: Text)]
-        (True, _) -> [sampledHeader JSON..= ("1" :: Text)]
-        (False, _) -> [sampledHeader JSON..= ("0" :: Text)]
-    in JSON.object $ defaultKVs ++ parentKVs ++ sampledKVs
 
 data ZipkinAnnotation = ZipkinAnnotation !POSIXTime !JSON.Value
 

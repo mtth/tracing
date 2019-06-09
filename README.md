@@ -3,10 +3,10 @@
 An [OpenTracing](https://opentracing.io/)-compliant, simple, and extensible
 distributed tracing library.
 
-+ _Simple:_ add a single `MonadTrace` constraint to start tracing (without making
-  your code harder to test)!
-+ _Extensible:_ use the built-in [Zipkin](http://zipkin.io) backend or implement
-  your own.
++ _Simple:_ add a single `MonadTrace` constraint to start tracing, without
+  making your code harder to test!
++ _Extensible:_ use the built-in [Zipkin](http://zipkin.io) backend or hook in
+  your own trace publication logic.
 
 ```haskell
 import Monitor.Tracing

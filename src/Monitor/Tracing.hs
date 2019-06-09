@@ -5,7 +5,6 @@
 -- package is useful if you wish to implement a new tracing backend.
 module Monitor.Tracing (
   -- * Overview
-  --
   -- | Let's assume we are interested in tracing the two following functions:
   --
   -- > listTaskIDs' :: MonadIO m => m [Int] -- Returns a list of all task IDs.
@@ -39,12 +38,9 @@ module Monitor.Tracing (
 
   -- * Generic trace creation
   MonadTrace,
-
   -- ** Controlling the sampling rate
   Sampling, alwaysSampled, neverSampled, sampledEvery, sampledWhen, debugEnabled,
-
   -- ** Building hierarchical traces
-  --
   -- | By default, traces created by 'trace' are independent from each other. However, we can get a
   -- lot more value out of tracing by organizing a trace's spans. The simplest and most common
   -- approach is to build a tree of spans, with a single root span and zero or more children for
@@ -53,7 +49,6 @@ module Monitor.Tracing (
   rootSpan, childSpan,
 
   -- * Backends
-  --
   -- | As a convenience, the top-level type for each backed is exported here.
   Zipkin
 ) where

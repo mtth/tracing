@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-{-| A simple tracing example which publishes traces to a local Zipkin server. -}
+-- | A simple tracing example which publishes traces to a local Zipkin server.
 module Main where
 
 import Control.Monad (void)

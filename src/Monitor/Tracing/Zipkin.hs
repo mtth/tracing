@@ -19,10 +19,8 @@ module Monitor.Tracing.Zipkin (
   new, run, publish, with,
 
   -- * Cross-process spans
-  --
   -- ** Communication
   B3, b3ToHeaders, b3FromHeaders, b3ToHeaderValue, b3FromHeaderValue,
-
   -- ** Span generation
   clientSpan, serverSpan, producerSpan, consumerSpan,
 

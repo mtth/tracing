@@ -3,7 +3,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 
--- | The 'MonadTrace' class
+-- | This module exposes the generic 'MonadTrace' class.
 module Control.Monad.Trace.Class (
   -- * Generating traces
   MonadTrace(..),
@@ -16,6 +16,9 @@ module Control.Monad.Trace.Class (
   Builder(..), Name, builder,
   Sampling, alwaysSampled, neverSampled, sampledEvery, sampledWhen, debugEnabled,
   -- * Annotating spans
+  -- | Note that not all annotation types are supported by all backends. For example Zipkin only
+  -- supports string tags (refer to "Monitor.Tracing.Zipkin" for the full list of supported span
+  -- metadata).
   Key, Value, tagDoubleValue, tagInt64Value, tagTextValue, logValue, logValueAt
 ) where
 

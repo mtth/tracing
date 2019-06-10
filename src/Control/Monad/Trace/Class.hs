@@ -145,7 +145,7 @@ debugEnabled = Debug
 
 -- | Returns a 'Sampling' which randomly samples one in every @n@ spans.
 sampledEvery :: Int -> Sampling
-sampledEvery n = WithProbability (1 / fromIntegral n)
+sampledEvery n = WithProbability $ 1 / fromIntegral n
 
 -- | Returns a 'Sampling' which samples a span iff the input is 'True'. It is equivalent to:
 --
@@ -164,22 +164,21 @@ rootSpanWith f sampling name = trace $ (f $ builder name) { builderSampling = Ju
 rootSpan :: MonadTrace m => Sampling -> Name -> m a -> m a
 rootSpan = rootSpanWith id
 
--- | Extends a trace if it is active, otherwise do nothing. The active span's ID will be added as a
--- reference to the new span and it will share the same trace ID (overriding any customization done
--- to the builder).
+-- | Extends a trace, same as 'childSpan' but also customizing the builder.
 childSpanWith :: MonadTrace m => (Builder -> Builder) -> Name -> m a -> m a
 childSpanWith f name actn = activeSpan >>= \case
   Nothing -> actn
   Just spn -> do
     let
       ctx = spanContext spn
-      bldr = (f $ builder name)
+      bldr = f $ builder name
       bldr' = bldr
         { builderTraceID = Just $ contextTraceID ctx
         , builderReferences = Set.insert (ChildOf $ contextSpanID ctx) (builderReferences bldr) }
     trace bldr' actn
 
--- | Extends a trace if it is active, otherwise do nothing.
+-- | Extends a trace: the active span's ID will be added as a reference to a newly created span and
+-- both spans will share the same trace ID. If no span is active, 'childSpan' is a no-op.
 childSpan :: MonadTrace m => Name -> m a -> m a
 childSpan = childSpanWith id
 

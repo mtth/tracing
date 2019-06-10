@@ -13,9 +13,9 @@ import Monitor.Tracing
 
 -- A traced action with its root span and two children.
 run :: MonadTrace m => m ()
-run = rootSpan (sampledEvery 10) do
-  childSpan "part-a" runA
-  childSpan "part-b" runB
+run = rootSpan (sampledEvery 10) "root" $ do
+  childSpan "child-a" runA
+  childSpan "child-b" runB
 ```
 
 To learn more, hop on over to

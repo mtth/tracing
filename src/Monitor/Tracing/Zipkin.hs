@@ -25,7 +25,11 @@ module Monitor.Tracing.Zipkin (
   clientSpan, serverSpan, producerSpan, consumerSpan,
 
   -- * Custom metadata
-  tag, annotate, annotateAt
+  -- ** Tags
+  tag, addTag, addInheritedTag,
+  -- ** Annotations
+  -- | Annotations are similar to tags, but timestamped.
+  annotate, annotateAt
 ) where
 
 import Control.Monad.Trace
@@ -148,6 +152,30 @@ with settings f = do
 -- | Adds a tag to the active span.
 tag :: MonadTrace m => Text -> Text -> m ()
 tag key val = addSpanEntry (publicKeyPrefix <> key) (tagTextValue val)
+
+-- | Adds a tag to a builder. This is a convenience method to use with 'childSpanWith', for example:
+--
+-- > childSpanWith (addTag "key" "value") "run" $ action
+--
+-- Note that there is not difference with adding the tag after the span. So the above code is
+-- equivalent to:
+--
+-- > childSpan "run" $ tag "key" "value" >> action
+addTag :: Text -> Text -> Builder -> Builder
+addTag key val bldr = bldr { builderTags = Map.insert key (JSON.toJSON val) (builderTags bldr) }
+
+-- | Adds an inherited tag to a builder. Unlike a tag added via 'addTag', this tag:
+--
+-- * will be inherited by all the span's children.
+-- * can only be added at span construction time.
+--
+-- For example, to add an ID tag to all spans inside a trace:
+--
+-- > rootSpanWith (addInheritedTag "id" "abcd-efg") alwaysSampled "run" $ action
+addInheritedTag :: Text -> Text -> Builder -> Builder
+addInheritedTag key val bldr =
+  let bgs = builderBaggages bldr
+  in bldr { builderBaggages = Map.insert key (T.encodeUtf8 val) bgs }
 
 -- | Annotates the active span using the current time.
 annotate :: MonadTrace m => Text -> m ()
@@ -375,7 +403,7 @@ instance JSON.ToJSON ZipkinSpan where
         , "timestamp" JSON..= microSeconds @Int64 (intervalStart itv)
         , "duration" JSON..= microSeconds @Int64 (intervalDuration itv)
         , "debug" JSON..= spanIsDebug spn
-        , "tags" JSON..= publicTags tags
+        , "tags" JSON..= (publicTags tags <> (JSON.toJSON . T.decodeUtf8 <$> contextBaggages ctx))
         , "annotations" JSON..= fmap (\(t, _, v) -> ZipkinAnnotation t v) logs ]
       optionalKVs = catMaybes
         [ ("parentId" JSON..=) <$> parentID (spanReferences spn)

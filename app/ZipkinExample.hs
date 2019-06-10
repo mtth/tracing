@@ -4,13 +4,14 @@
 module Main where
 
 import Control.Monad (void)
+import Control.Monad.Trace.Class (rootSpanWith)
 import Monitor.Tracing
 import qualified Monitor.Tracing.Zipkin as ZPK
 import UnliftIO (MonadUnliftIO, liftIO)
 import UnliftIO.Concurrent (forkIO, threadDelay)
 
 example :: (MonadTrace m, MonadUnliftIO m) => m ()
-example = rootSpan alwaysSampled "something" $ do
+example = rootSpanWith (ZPK.addInheritedTag "id" "1234") alwaysSampled "something" $ do
   ZPK.tag "tag.key1" "a tag value"
   threadDelay 100000
   childSpan "nested1" $ do

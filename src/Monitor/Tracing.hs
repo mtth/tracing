@@ -44,7 +44,7 @@ module Monitor.Tracing (
   -- | By default, traces created by 'trace' are independent from each other. However, we can get a
   -- lot more value out of tracing by organizing a trace's spans. The simplest and most common
   -- approach is to build a tree of spans, with a single root span and zero or more children for
-  -- each span. 'rootSpan' and 'childSpan' below set up spans such that the lineage of spans is
+  -- each span. 'rootSpan' and 'childSpan' below set up spans such that lineage information is
   -- automatically propagated.
   rootSpan, childSpan,
 

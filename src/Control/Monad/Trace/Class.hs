@@ -5,17 +5,22 @@
 
 -- | This module exposes the generic 'MonadTrace' class.
 module Control.Monad.Trace.Class (
-  -- * Generating traces
-  MonadTrace(..),
+  -- * Types
   Span(..), Context(..),
-  TraceID(..), encodeTraceID, decodeTraceID,
-  SpanID(..), encodeSpanID, decodeSpanID,
+  TraceID(..), decodeTraceID, encodeTraceID,
+  SpanID(..), decodeSpanID, encodeSpanID,
   Reference(..),
-  rootSpan, rootSpanWith, childSpan, childSpanWith,
-  -- * Customizing spans
+
+  -- * Generating traces
+  -- ** Individual spans
+  MonadTrace(..),
   Builder(..), Name, builder,
+  -- ** Structured traces
+  rootSpan, rootSpanWith, childSpan, childSpanWith,
+  -- ** Sampling
   Sampling, alwaysSampled, neverSampled, sampledEvery, sampledWhen, debugEnabled,
-  -- * Annotating spans
+
+  -- * Annotating traces
   -- | Note that not all annotation types are supported by all backends. For example Zipkin only
   -- supports string tags (refer to "Monitor.Tracing.Zipkin" for the full list of supported span
   -- metadata).
@@ -46,7 +51,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (POSIXTime)
 
--- | A monad capable of generating traces.
+-- | A monad capable of generating and modifying trace spans.
 --
 -- There are currently two instances of this monad:
 --
@@ -100,10 +105,10 @@ instance MonadTrace Identity where
 
 -- Creating traces
 
--- | A trace builder.
+-- | A span builder.
 --
--- Note that 'Builder' has an 'IsString' instance, producing a span with the given string as name,
--- no additional references, tags, or baggages. This allows convenient creation of spans via the
+-- 'Builder' has an 'IsString' instance, producing a span with the given string as name, no
+-- additional references, tags, or baggages. This allows convenient creation of spans via the
 -- @OverloadedStrings@ pragma.
 data Builder = Builder
   { builderName :: !Name

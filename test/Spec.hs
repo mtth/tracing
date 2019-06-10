@@ -6,15 +6,11 @@
 import Control.Monad.Trace
 import Control.Monad.Trace.Class
 import Monitor.Tracing
+import Monitor.Tracing.Local (collectSamples)
 import qualified Monitor.Tracing.Zipkin as ZPK
 
-import Control.Concurrent
-import Control.Concurrent.STM (atomically, tryReadTChan)
-import Control.Monad.Fix (fix)
-import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (MonadReader, Reader, ReaderT, ask, runReader, runReaderT)
 import Control.Monad.State.Strict (MonadState, StateT, evalStateT, get)
-import Data.IORef
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Test.Hspec
@@ -22,14 +18,7 @@ import Test.Hspec.QuickCheck
 import UnliftIO (MonadUnliftIO)
 
 collectSpans :: MonadUnliftIO m => TraceT m () -> m [Span]
-collectSpans actn = do
-  tracer <- newTracer
-  runTraceT actn tracer
-  ref <- liftIO $ newIORef []
-  liftIO $ fix $ \loop -> atomically (tryReadTChan $ tracerChannel tracer) >>= \case
-    Nothing -> pure ()
-    Just spl -> modifyIORef ref (sampleSpan spl:) >> loop
-  reverse <$> liftIO (readIORef ref)
+collectSpans actn = fmap sampleSpan . snd <$> collectSamples actn
 
 main :: IO ()
 main = hspec $ do

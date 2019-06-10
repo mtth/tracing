@@ -79,8 +79,7 @@ randomSpanID :: IO SpanID
 randomSpanID = SpanID <$> randomID 8
 
 -- | A fully qualified span identifier, containing both the ID of the trace the span belongs to and
--- the span's ID. Span contexts can be exported (resp. imported) via their 'JSON.toJSON' (resp.
--- 'JSON.fromJSON') instance.
+-- the span's ID.
 data Context = Context
   { contextTraceID :: !TraceID
   , contextSpanID :: !SpanID

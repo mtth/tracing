@@ -8,7 +8,7 @@
 -- tracing to an application, start at "Monitor.Tracing".
 module Control.Monad.Trace (
   TraceT, runTraceT,
-  Tracer(..),
+  Tracer, tracerChannel, tracerPendingCount,
   Sample(..), Tags, Logs,
   newTracer
 ) where
@@ -40,7 +40,7 @@ type Tags = Map Key JSON.Value
 -- | A collection of span logs, sorted in chronological order.
 type Logs = [(POSIXTime, Key, JSON.Value)]
 
--- | A sampled span.
+-- | A sampled span, and its associated metadata.
 data Sample = Sample
   { sampleSpan :: !Span
   -- ^ The sampled span.
@@ -57,7 +57,7 @@ data Sample = Sample
 -- | A tracer collects spans emitted inside 'TraceT'.
 data Tracer = Tracer
   { tracerChannel :: TChan Sample
-  -- ^ Channel sampled spans get written to when they complete.
+  -- ^ The channel sampled spans get written to when they complete.
   , tracerPendingCount :: TVar Int
   -- ^ The number of spans currently in flight (started but not yet completed).
   }

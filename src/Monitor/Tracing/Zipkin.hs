@@ -9,10 +9,9 @@
 module Monitor.Tracing.Zipkin (
   -- * Configuration
   -- ** General settings
-  Settings, defaultSettings, settingsHostname, settingsPort, settingsManager, settingsEndpoint,
-  settingsPublishPeriod,
+  Settings(..), defaultSettings,
   -- ** Endpoint
-  Endpoint, defaultEndpoint, endpointService, endpointPort, endpointIPv4, endpointIPv6,
+  Endpoint(..), defaultEndpoint,
 
   -- * Publishing traces
   Zipkin,
@@ -20,7 +19,7 @@ module Monitor.Tracing.Zipkin (
 
   -- * Cross-process spans
   -- ** Communication
-  B3, b3ToHeaders, b3FromHeaders, b3ToHeaderValue, b3FromHeaderValue,
+  B3(..), b3ToHeaders, b3FromHeaders, b3ToHeaderValue, b3FromHeaderValue,
   -- ** Span generation
   clientSpan, serverSpan, producerSpan, consumerSpan,
 
@@ -66,9 +65,7 @@ import Network.Socket (HostName, PortNumber)
 import UnliftIO (MonadUnliftIO)
 import UnliftIO.Exception (finally)
 
--- | 'Zipkin' creation settings. Note that its constructor is not exposed to allow backwards
--- compatible evolution; 'Settings' should instead be created either via 'defaultSettings' or its
--- 'IsString' instance.
+-- | 'Zipkin' creation settings.
 data Settings = Settings
   { settingsHostname :: !(Maybe HostName)
   -- ^ The Zipkin server's hostname, defaults to @localhost@ if unset.
@@ -186,10 +183,15 @@ annotateAt time val = addSpanEntry "" (logValueAt time val)
 -- | Exportable trace information, used for cross-process traces.
 data B3 = B3
   { b3TraceID :: !TraceID
+  -- ^ The span's trace ID.
   , b3SpanID :: !SpanID
+  -- ^ The span's ID.
   , b3IsSampled :: !Bool
+  -- ^ Whether the span was sampled.
   , b3IsDebug :: !Bool
+  -- ^ Whether the span has debug enabled (which implies that the span is sampled).
   , b3ParentSpanID :: !(Maybe SpanID)
+  -- ^ The span's parent's ID, or 'Nothing' for root spans.
   } deriving (Eq, Ord, Show)
 
 traceIDHeader, spanIDHeader, parentSpanIDHeader, sampledHeader, debugHeader :: CI ByteString

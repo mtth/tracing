@@ -9,7 +9,7 @@
 module Control.Monad.Trace (
   TraceT, runTraceT,
   Tracer(..),
-  Tags, Logs, Interval(..),
+  Sample(..), Tags, Logs,
   newTracer
 ) where
 
@@ -32,7 +32,6 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Time.Clock (NominalDiffTime)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
-import System.Random (randomRIO)
 import UnliftIO (MonadUnliftIO, UnliftIO(..), askUnliftIO, withRunInIO, withUnliftIO)
 
 -- | A collection of span tags.
@@ -41,16 +40,24 @@ type Tags = Map Key JSON.Value
 -- | A collection of span logs, sorted in chronological order.
 type Logs = [(POSIXTime, Key, JSON.Value)]
 
--- | Timing information about a span.
-data Interval = Interval
-  { intervalStart :: !POSIXTime
-  , intervalDuration :: !NominalDiffTime
+-- | A sampled span.
+data Sample = Sample
+  { sampleSpan :: !Span
+  -- ^ The sampled span.
+  , sampleTags :: !Tags
+  -- ^ Tags collected during this span.
+  , sampleLogs :: !Logs
+  -- ^ Logs collected during this span.
+  , sampleStart :: !POSIXTime
+  -- ^ The time the span started at.
+  , sampleDuration :: !NominalDiffTime
+  -- ^ The span's duration.
   }
 
 -- | A tracer collects spans emitted inside 'TraceT'.
 data Tracer = Tracer
-  { tracerChannel :: TChan (Span, Tags, Logs, Interval)
-  -- ^ Channel spans get written to when they complete.
+  { tracerChannel :: TChan Sample
+  -- ^ Channel sampled spans get written to when they complete.
   , tracerPendingCount :: TVar Int
   -- ^ The number of spans currently in flight (started but not yet completed).
   }
@@ -81,36 +88,32 @@ instance MonadUnliftIO m => MonadTrace (TraceT m) where
       mbParentSpn = scopeSpan parentScope
       mbParentCtx = spanContext <$> mbParentSpn
       mbTraceID = contextTraceID <$> mbParentCtx
-      mbSampling = builderSampling bldr
-      isDebug = fromMaybe False $ ((== Debug) <$> mbSampling) <|> (spanIsDebug <$> mbParentSpn)
-    isSampled <- case mbSampling of
-      Just Debug -> pure True
-      Just Always -> pure True
-      Just Never -> pure False
-      Just (WithProbability r) -> do
-        r' <- liftIO $ randomRIO (0, 1)
-        pure $ r' < r
-      Nothing -> pure $ maybe False spanIsSampled mbParentSpn
     spanID <- maybe (liftIO randomSpanID) pure $ builderSpanID bldr
     traceID <- maybe (liftIO randomTraceID) pure $ builderTraceID bldr <|> mbTraceID
-    tagsTV <- liftIO $ newTVarIO $ builderTags bldr
-    logsTV <- liftIO $ newTVarIO []
+    sampling <- case builderSamplingPolicy bldr of
+      Just policy -> liftIO policy
+      Nothing -> pure $ fromMaybe Never (spanSamplingDecision <$> mbParentSpn)
     let
       baggages = fromMaybe Map.empty $ contextBaggages <$> mbParentCtx
       ctx = Context traceID spanID (builderBaggages bldr `Map.union` baggages)
-      spn = Span (builderName bldr) ctx (builderReferences bldr) isSampled isDebug
+      spn = Span (builderName bldr) ctx (builderReferences bldr) sampling
       tracer = scopeTracer parentScope
-      childScope = Scope tracer (Just spn) (Just tagsTV) (Just logsTV)
-    withRunInIO $ \run -> do
-      start <- getPOSIXTime
-      atomically $ modifyTVar' (tracerPendingCount tracer) (+1)
-      run (local (const childScope) reader) `finally` do
-        end <- getPOSIXTime
-        atomically $ do
-          modifyTVar' (tracerPendingCount tracer) (\n -> n - 1)
-          tags <- readTVar tagsTV
-          logs <- sortOn (\(t, k, _) -> (t, k)) <$> readTVar logsTV
-          writeTChan (tracerChannel tracer) (spn, tags, logs, Interval start (end - start))
+    if spanIsSampled spn
+      then do
+        tagsTV <- liftIO $ newTVarIO $ builderTags bldr
+        logsTV <- liftIO $ newTVarIO []
+        let childScope = Scope tracer (Just spn) (Just tagsTV) (Just logsTV)
+        withRunInIO $ \run -> do
+          start <- getPOSIXTime
+          atomically $ modifyTVar' (tracerPendingCount tracer) (+1)
+          run (local (const childScope) reader) `finally` do
+            end <- getPOSIXTime
+            atomically $ do
+              modifyTVar' (tracerPendingCount tracer) (\n -> n - 1)
+              tags <- readTVar tagsTV
+              logs <- sortOn (\(t, k, _) -> (t, k)) <$> readTVar logsTV
+              writeTChan (tracerChannel tracer) (Sample spn tags logs start (end - start))
+      else local (const $ Scope tracer (Just spn) Nothing Nothing) reader
 
   activeSpan = TraceT $ asks scopeSpan
 

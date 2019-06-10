@@ -6,7 +6,7 @@ module Control.Monad.Trace.Internal (
   Context(..),
   Name,
   Span(..),
-  Sampling(..),
+  SamplingDecision(..), spanIsSampled, spanIsDebug,
   Reference(..),
   Key, Value(..)
 ) where
@@ -110,17 +110,23 @@ data Span = Span
   { spanName :: !Name
   , spanContext :: !Context
   , spanReferences :: !(Set Reference)
-  , spanIsSampled :: !Bool
-  , spanIsDebug :: !Bool
+  , spanSamplingDecision :: !SamplingDecision
   }
 
--- | A trace sampling strategy.
-data Sampling
+-- | A span's sampling decision.
+data SamplingDecision
   = Always
   | Never
   | Debug
-  | WithProbability Double
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Enum, Show)
+
+-- | Returns whether the span is sampled.
+spanIsSampled :: Span -> Bool
+spanIsSampled spn = spanSamplingDecision spn /= Never
+
+-- | Returns whether the span has debug enabled.
+spanIsDebug :: Span -> Bool
+spanIsDebug spn = spanSamplingDecision spn == Debug
 
 randomID :: Int -> IO ByteString
 randomID len = BS.pack <$> replicateM len randomIO

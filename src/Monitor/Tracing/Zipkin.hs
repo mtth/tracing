@@ -106,9 +106,7 @@ flushSpans ept tracer req mgr = do
   ref <- newIORef []
   fix $ \loop -> atomically (tryReadTChan $ tracerChannel tracer) >>= \case
     Nothing -> pure ()
-    Just (spn, tags, logs, itv) -> do
-      when (spanIsSampled spn) $ modifyIORef ref (ZipkinSpan ept spn tags logs itv:)
-      loop
+    Just sample -> modifyIORef ref (ZipkinSpan ept sample:) >> loop
   spns <- readIORef ref
   when (not $ null spns) $ do
     let req' = req { HTTP.requestBody = HTTP.RequestBodyLBS $ JSON.encode spns }
@@ -284,13 +282,13 @@ insertTag key val =
 importB3 :: B3 -> Endo Builder
 importB3 b3 =
   let
-    sampling = if b3IsDebug b3
+    policy = if b3IsDebug b3
       then debugEnabled
       else sampledWhen $ b3IsSampled b3
   in Endo $ \bldr -> bldr
     { builderTraceID = Just (b3TraceID b3)
     , builderSpanID = Just (b3SpanID b3)
-    , builderSampling = Just sampling }
+    , builderSamplingPolicy = Just policy }
 
 publicKeyPrefix :: Text
 publicKeyPrefix = "Z."
@@ -335,7 +333,7 @@ incomingSpan kind mbEpt b3 actn =
   in trace bldr actn
 
 -- | Generates a child span with @SERVER@ kind. The client's 'B3' should be provided as input,
--- for example parsed using 'b3FromRequestHeaders'.
+-- for example parsed using 'b3FromHeaders'.
 serverSpan :: MonadTrace m => Maybe Endpoint -> B3 -> m a -> m a
 serverSpan = incomingSpan "SERVER"
 
@@ -384,7 +382,7 @@ instance JSON.ToJSON ZipkinAnnotation where
 
 -- Internal type used to encode spans in the <https://zipkin.apache.org/zipkin-api/#/ format>
 -- expected by Zipkin.
-data ZipkinSpan = ZipkinSpan !(Maybe Endpoint) !Span !Tags !Logs !Interval
+data ZipkinSpan = ZipkinSpan !(Maybe Endpoint) !Sample
 
 publicTags :: Tags -> Map Text JSON.Value
 publicTags = Map.fromList . catMaybes . fmap go . Map.assocs where
@@ -393,15 +391,15 @@ publicTags = Map.fromList . catMaybes . fmap go . Map.assocs where
     Just k' -> Just (k', v)
 
 instance JSON.ToJSON ZipkinSpan where
-  toJSON (ZipkinSpan mbEpt spn tags logs itv) =
+  toJSON (ZipkinSpan mbEpt (Sample spn tags logs start duration)) =
     let
       ctx = spanContext spn
       requiredKVs =
         [ "traceId" JSON..= contextTraceID ctx
         , "name" JSON..= spanName spn
         , "id" JSON..= contextSpanID ctx
-        , "timestamp" JSON..= microSeconds @Int64 (intervalStart itv)
-        , "duration" JSON..= microSeconds @Int64 (intervalDuration itv)
+        , "timestamp" JSON..= microSeconds @Int64 start
+        , "duration" JSON..= microSeconds @Int64 duration
         , "debug" JSON..= spanIsDebug spn
         , "tags" JSON..= (publicTags tags <> (JSON.toJSON . T.decodeUtf8 <$> contextBaggages ctx))
         , "annotations" JSON..= fmap (\(t, _, v) -> ZipkinAnnotation t v) logs ]

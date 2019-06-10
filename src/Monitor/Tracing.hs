@@ -36,17 +36,18 @@ module Monitor.Tracing (
   -- > main :: IO ()
   -- > main = ZPK.with ZPK.defaultSettings $ ZPK.run printTasks
 
-  -- * Generic trace creation
+  -- * Trace creation
   MonadTrace,
-  -- ** Controlling the sampling rate
-  Sampling, alwaysSampled, neverSampled, sampledEvery, sampledWhen, debugEnabled,
-  -- ** Building hierarchical traces
+  -- ** Starting a new trace
   -- | By default, traces created by 'trace' are independent from each other. However, we can get a
   -- lot more value out of tracing by organizing a trace's spans. The simplest and most common
   -- approach is to build a tree of spans, with a single root span and zero or more children for
   -- each span. 'rootSpan' and 'childSpan' below set up spans such that lineage information is
   -- automatically propagated.
-  rootSpan, childSpan,
+  -- ** Starting a new trace
+  rootSpan, alwaysSampled, neverSampled, sampledWhen, sampledWithProbability, debugEnabled,
+  -- ** Extending a trace
+  childSpan,
 
   -- * Backends
   -- | As a convenience, the top-level type for each backend is exported here.

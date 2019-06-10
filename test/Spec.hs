@@ -28,7 +28,7 @@ collectSpans actn = do
   ref <- liftIO $ newIORef []
   liftIO $ fix $ \loop -> atomically (tryReadTChan $ tracerChannel tracer) >>= \case
     Nothing -> pure ()
-    Just (spn, _, _, _) -> modifyIORef ref (spn:) >> loop
+    Just spl -> modifyIORef ref (sampleSpan spl:) >> loop
   reverse <$> liftIO (readIORef ref)
 
 main :: IO ()
@@ -48,12 +48,11 @@ main = hspec $ do
       spans <- collectSpans @IO (pure ())
       fmap spanName spans `shouldBe` []
     it "should collect a single span when no children are created" $ do
-      spans <- collectSpans @IO (trace "t0" $ pure ())
-      fmap spanName spans `shouldBe` ["t0"]
+      spans <- collectSpans @IO (trace "t" { builderSamplingPolicy = Just alwaysSampled } $ pure ())
+      fmap spanName spans `shouldBe` ["t"]
     it "should be able to stack on top of a ReaderT" $ do
-      spans <- (collectSpans @IO) $ trace "c2" $ pure ()
       let
-        actn = trace "t" $ do
+        actn = trace "t" { builderSamplingPolicy = Just alwaysSampled } $ do
           name <- ask
           trace (builder name) $ pure ()
       spans <- runReaderT (collectSpans @(ReaderT Text IO) actn) "foo"

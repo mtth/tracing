@@ -6,7 +6,8 @@
 -- | This module exposes the generic 'MonadTrace' class.
 module Control.Monad.Trace.Class (
   -- * Types
-  Span(..), Context(..),
+  Span(..), spanIsSampled, spanIsDebug,
+  Context(..),
   TraceID(..), decodeTraceID, encodeTraceID,
   SpanID(..), decodeSpanID, encodeSpanID,
   Reference(..),
@@ -18,7 +19,8 @@ module Control.Monad.Trace.Class (
   -- ** Structured traces
   rootSpan, rootSpanWith, childSpan, childSpanWith,
   -- ** Sampling
-  Sampling, alwaysSampled, neverSampled, sampledEvery, sampledWhen, debugEnabled,
+  SamplingDecision(..),
+  SamplingPolicy, alwaysSampled, neverSampled, sampledWithProbability, sampledWhen, debugEnabled,
 
   -- * Annotating traces
   -- | Note that not all annotation types are supported by all backends. For example Zipkin only
@@ -50,6 +52,7 @@ import Data.String (IsString(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (POSIXTime)
+import System.Random (randomRIO)
 
 -- | A monad capable of generating and modifying trace spans.
 --
@@ -124,10 +127,10 @@ data Builder = Builder
   -- ^ Initial set of tags.
   , builderBaggages :: !(Map Key ByteString)
   -- ^ Span context baggages.
-  , builderSampling :: !(Maybe Sampling)
+  , builderSamplingPolicy :: !(Maybe SamplingPolicy)
   -- ^ How the span should be sampled. If unset, the active's span sampling will be used if present,
   -- otherwise the span will not be sampled.
-  } deriving Show
+  }
 
 -- | Returns a 'Builder' with the given input as name and all other fields empty.
 builder :: Name -> Builder
@@ -136,37 +139,43 @@ builder name = Builder name Nothing Nothing Set.empty Map.empty Map.empty Nothin
 instance IsString Builder where
   fromString = builder . T.pack
 
--- | Returns a 'Sampling' which always samples.
-alwaysSampled :: Sampling
-alwaysSampled = Always
+-- | An action to determine how a span should be sampled.
+type SamplingPolicy = IO SamplingDecision
 
--- | Returns a 'Sampling' which never samples.
-neverSampled :: Sampling
-neverSampled = Never
+-- | Returns a 'SamplingPolicy' which always samples.
+alwaysSampled :: SamplingPolicy
+alwaysSampled = pure Always
 
--- | Returns a debug 'Sampling'. Debug spans are always sampled.
-debugEnabled :: Sampling
-debugEnabled = Debug
+-- | Returns a 'SamplingPolicy' which never samples.
+neverSampled :: SamplingPolicy
+neverSampled = pure Never
 
--- | Returns a 'Sampling' which randomly samples one in every @n@ spans.
-sampledEvery :: Int -> Sampling
-sampledEvery n = WithProbability $ 1 / fromIntegral n
+-- | Returns a debug 'SamplingPolicy'. Debug spans are always sampled.
+debugEnabled :: SamplingPolicy
+debugEnabled = pure Debug
 
--- | Returns a 'Sampling' which samples a span iff the input is 'True'. It is equivalent to:
+-- | Returns a 'SamplingPolicy' which samples a span iff the input is 'True'. It is equivalent to:
 --
 -- > sampledWhen b = if b then alwaysSampled else neverSampled
-sampledWhen :: Bool -> Sampling
-sampledWhen b = if b then Always else Never
+sampledWhen :: Bool -> SamplingPolicy
+sampledWhen b = pure $ if b then Always else Never
+
+-- | Returns a 'SamplingPolicy' which randomly samples spans.
+sampledWithProbability :: Double -> SamplingPolicy
+sampledWithProbability r = randomRIO (0, 1) >>= sampledWhen . (< r)
 
 -- Generic span creation
 
 -- | Starts a new trace, customizing the span builder. Note that the sampling input will override
 -- any sampling customization set on the builder.
-rootSpanWith :: MonadTrace m => (Builder -> Builder) -> Sampling -> Name -> m a -> m a
-rootSpanWith f sampling name = trace $ (f $ builder name) { builderSampling = Just sampling }
+rootSpanWith :: MonadTrace m => (Builder -> Builder) -> SamplingPolicy -> Name -> m a -> m a
+rootSpanWith f policy name = trace $ (f $ builder name) { builderSamplingPolicy = Just policy }
 
--- | Starts a new trace.
-rootSpan :: MonadTrace m => Sampling -> Name -> m a -> m a
+-- | Starts a new trace. For performance reasons, it is possible to customize how frequently tracing
+-- information is collected. This allows fine-grain control on the overhead induced by tracing. For
+-- example, you might only want to sample 1% of a very actively used call-path with
+-- @sampledWithProbability 0.01@.
+rootSpan :: MonadTrace m => SamplingPolicy -> Name -> m a -> m a
 rootSpan = rootSpanWith id
 
 -- | Extends a trace, same as 'childSpan' but also customizing the builder.

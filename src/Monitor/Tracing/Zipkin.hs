@@ -91,6 +91,10 @@ instance IsString Settings where
   fromString s = defaultSettings { settingsHostname = Just s }
 
 -- | A Zipkin trace publisher.
+--
+-- All publisher functionality is thread-safe. In particular it is safe to 'publish' concurrently
+-- with 'run', and/or 'run' multiple actions concurrently. Note also that all sampled spans are
+-- retained in memory until they are published.
 data Zipkin = Zipkin
   { zipkinManager :: !Manager
   , zipkinRequest :: !Request
@@ -101,7 +105,7 @@ data Zipkin = Zipkin
 flushSpans :: Maybe Endpoint -> Tracer -> Request -> Manager -> IO ()
 flushSpans ept tracer req mgr = do
   ref <- newIORef []
-  fix $ \loop -> atomically (tryReadTChan $ tracerChannel tracer) >>= \case
+  fix $ \loop -> atomically (tryReadTChan $ spanSamples tracer) >>= \case
     Nothing -> pure ()
     Just sample -> modifyIORef ref (ZipkinSpan ept sample:) >> loop
   spns <- readIORef ref
@@ -133,7 +137,7 @@ new (Settings mbHostname mbPort mbEpt mbMgr mbPrd) = liftIO $ do
 run :: TraceT m a -> Zipkin -> m a
 run actn zipkin = runTraceT actn (zipkinTracer zipkin)
 
--- | Flushes all complete spans to the Zipkin server. This method is thread-safe.
+-- | Flushes all complete spans to the Zipkin server.
 publish :: MonadIO m => Zipkin -> m ()
 publish z =
   liftIO $ flushSpans (zipkinEndpoint z) (zipkinTracer z) (zipkinRequest z) (zipkinManager z)

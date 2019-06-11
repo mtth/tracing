@@ -6,7 +6,7 @@
 import Control.Monad.Trace
 import Control.Monad.Trace.Class
 import Monitor.Tracing
-import Monitor.Tracing.Local (collectSamples)
+import Monitor.Tracing.Local (collectSpanSamples)
 import qualified Monitor.Tracing.Zipkin as ZPK
 
 import Control.Monad.Reader (MonadReader, Reader, ReaderT, ask, runReader, runReaderT)
@@ -18,7 +18,7 @@ import Test.Hspec.QuickCheck
 import UnliftIO (MonadUnliftIO)
 
 collectSpans :: MonadUnliftIO m => TraceT m () -> m [Span]
-collectSpans actn = fmap sampleSpan . snd <$> collectSamples actn
+collectSpans actn = fmap sampleSpan . snd <$> collectSpanSamples actn
 
 main :: IO ()
 main = hspec $ do

@@ -1,7 +1,7 @@
 -- | This module provides convenience functionality to debug traces locally. For production use,
 -- prefer alternatives, e.g. "Monitor.Tracing.Zipkin".
 module Monitor.Tracing.Local (
-  collectSamples
+  collectSpanSamples
 ) where
 
 import Control.Concurrent.STM (atomically, readTVar, readTChan, tryReadTChan)
@@ -17,15 +17,15 @@ import UnliftIO (MonadUnliftIO)
 -- Spans which start before the action returns are guaranteed to be collected, even if they complete
 -- after (in this case collection will block until their completion). More precisely,
 -- 'collectSamples' will return the first time there are no pending spans after the action is done.
-collectSamples :: MonadUnliftIO m => TraceT m a -> m (a, [Sample])
-collectSamples actn = do
+collectSpanSamples :: MonadUnliftIO m => TraceT m a -> m (a, [Sample])
+collectSpanSamples actn = do
   tracer <- newTracer
   rv <- runTraceT actn tracer
   ref <- liftIO $ newIORef []
   let
     addSample spl = liftIO $ modifyIORef' ref (spl:)
-    samplesTC = tracerChannel tracer
-    pendingTV = tracerPendingCount tracer
+    samplesTC = spanSamples tracer
+    pendingTV = pendingSpanCount tracer
   liftIO $ fix $ \loop -> do
     (mbSample, pending) <- atomically $ (,) <$> tryReadTChan samplesTC <*> readTVar pendingTV
     case mbSample of

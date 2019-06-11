@@ -13,7 +13,7 @@ import Monitor.Tracing
 
 -- A traced action with its root span and two children.
 run :: MonadTrace m => m ()
-run = rootSpan (sampledEvery 10) "root" $ do
+run = rootSpan alwaysSampled "parent" $ do
   childSpan "child-a" runA
   childSpan "child-b" runB
 ```

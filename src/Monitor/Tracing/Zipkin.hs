@@ -6,6 +6,10 @@
 
 -- | This module implements a <https://zipkin.apache.org/ Zipkin>-powered trace publisher. You will
 -- almost certainly want to import it qualified.
+--
+-- Zipkin does not support all OpenTracing functionality. To guarantee that everything works as
+-- expected, you should only use the functions defined in this module or exported by
+-- "Monitor.Tracing".
 module Monitor.Tracing.Zipkin (
   -- * Configuration
   -- ** General settings
@@ -21,14 +25,16 @@ module Monitor.Tracing.Zipkin (
   -- ** Communication
   B3(..), b3ToHeaders, b3FromHeaders, b3ToHeaderValue, b3FromHeaderValue,
   -- ** Span generation
-  clientSpan, serverSpan, producerSpan, consumerSpan,
+  clientSpan, clientSpanWith, serverSpan, serverSpanWith, producerSpanWith, consumerSpanWith,
 
   -- * Custom metadata
   -- ** Tags
   tag, addTag, addInheritedTag,
   -- ** Annotations
   -- | Annotations are similar to tags, but timestamped.
-  annotate, annotateAt
+  annotate, annotateAt,
+  -- ** Endpoints
+  addEndpoint
 ) where
 
 import Control.Monad.Trace
@@ -165,7 +171,7 @@ addTag key val bldr = bldr { builderTags = Map.insert key (JSON.toJSON val) (bui
 
 -- | Adds an inherited tag to a builder. Unlike a tag added via 'addTag', this tag:
 --
--- * will be inherited by all the span's children.
+-- * will be inherited by all the span's /local/ children.
 -- * can only be added at span construction time.
 --
 -- For example, to add an ID tag to all spans inside a trace:
@@ -309,9 +315,9 @@ kindKey = "z.k"
 
 -- Internal keys
 
-outgoingSpan :: MonadTrace m => Text -> Maybe Endpoint -> Name -> (Maybe B3 -> m a) -> m a
-outgoingSpan kind mbEpt name f = childSpanWith (appEndo endo) name actn where
-  endo = insertTag kindKey kind <> maybe mempty (insertTag endpointKey) mbEpt
+outgoingSpan :: MonadTrace m => Text -> Endo Builder -> Name -> (Maybe B3 -> m a) -> m a
+outgoingSpan kind endo name f = childSpanWith (appEndo endo') name actn where
+  endo' = insertTag kindKey kind <> endo
   actn = activeSpan >>= \case
     Nothing -> f Nothing
     Just spn -> f $ Just $ b3FromSpan spn
@@ -320,32 +326,42 @@ outgoingSpan kind mbEpt name f = childSpanWith (appEndo endo) name actn where
 -- (or 'Nothing' if tracing is inactive) so that it can be forwarded to the server. For example, to
 -- emit an HTTP request and forward the trace information in the headers:
 --
+-- > import Network.HTTP.Simple
+-- >
 -- > clientSpan "api-call" $ \(Just b3) -> $ do
--- >   res <- httpLbs "http://host/api" { requestHeaders = b3ToHeaders b3 }
+-- >   res <- httpBS "http://host/api" & addRequestHeader "b3" (b3ToHeaderValue b3)
 -- >   process res -- Do something with the response.
-clientSpan :: MonadTrace m => Maybe Endpoint -> Name -> (Maybe B3 -> m a) -> m a
-clientSpan = outgoingSpan "CLIENT"
+clientSpan :: MonadTrace m => Name -> (Maybe B3 -> m a) -> m a
+clientSpan = clientSpanWith id
+
+-- | Generates a client span, optionally modifying the span's builder. This can be useful in
+-- combination with 'addEndpoint' if the remote server does not have tracing enabled.
+clientSpanWith :: MonadTrace m => (Builder -> Builder) -> Name -> (Maybe B3 -> m a) -> m a
+clientSpanWith f = outgoingSpan "CLIENT" (Endo f)
 
 -- | Generates a child span with @PRODUCER@ kind. This function also provides the corresponding 'B3'
 -- so that it can be forwarded to the consumer.
-producerSpan :: MonadTrace m => Maybe Endpoint -> Name -> (Maybe B3 -> m a) -> m a
-producerSpan = outgoingSpan "PRODUCER"
+producerSpanWith :: MonadTrace m => (Builder -> Builder) -> Name -> (Maybe B3 -> m a) -> m a
+producerSpanWith f = outgoingSpan "PRODUCER" (Endo f)
 
-incomingSpan :: MonadTrace m => Text -> Maybe Endpoint -> B3 -> m a -> m a
-incomingSpan kind mbEpt b3 actn =
-  let
-    endo = importB3 b3 <> insertTag kindKey kind <> maybe mempty (insertTag endpointKey) mbEpt
-    bldr = appEndo endo $ builder ""
+incomingSpan :: MonadTrace m => Text -> Endo Builder -> B3 -> m a -> m a
+incomingSpan kind endo b3 actn =
+  let bldr = appEndo (importB3 b3 <> insertTag kindKey kind <> endo) $ builder ""
   in trace bldr actn
 
 -- | Generates a child span with @SERVER@ kind. The client's 'B3' should be provided as input,
 -- for example parsed using 'b3FromHeaders'.
-serverSpan :: MonadTrace m => Maybe Endpoint -> B3 -> m a -> m a
-serverSpan = incomingSpan "SERVER"
+serverSpan :: MonadTrace m => B3 -> m a -> m a
+serverSpan = serverSpanWith id
+
+-- | Generates a server span, optionally modifying the span's builder. This can be useful in
+-- combination with 'addEndpoint' if the remote client does not have tracing enabled.
+serverSpanWith :: MonadTrace m => (Builder -> Builder) -> B3 -> m a -> m a
+serverSpanWith f = incomingSpan "SERVER" (Endo f)
 
 -- | Generates a child span with @CONSUMER@ kind. The producer's 'B3' should be provided as input.
-consumerSpan :: MonadTrace m => Maybe Endpoint -> B3 -> m a -> m a
-consumerSpan = incomingSpan "CONSUMER"
+consumerSpanWith :: MonadTrace m => (Builder -> Builder) -> B3 -> m a -> m a
+consumerSpanWith f = incomingSpan "CONSUMER" (Endo f)
 
 -- | Information about a hosted service, included in spans and visible in the Zipkin UI.
 data Endpoint = Endpoint
@@ -362,6 +378,14 @@ data Endpoint = Endpoint
 -- | An empty endpoint.
 defaultEndpoint :: Endpoint
 defaultEndpoint = Endpoint Nothing Nothing Nothing Nothing
+
+-- | Adds a remote endpoint to a builder. This is mostly useful when generating cross-process spans
+-- where the remote endpoint is not already traced (otherwise Zipkin will associate the spans
+-- correctly automatically). For example when emitting a request to an outside server:
+--
+-- > clientSpanWith (addEndpoint "outside-api") -- ...
+addEndpoint :: Endpoint -> Builder -> Builder
+addEndpoint = appEndo . insertTag endpointKey
 
 -- | Generates an endpoint with the given string as service.
 instance IsString Endpoint where

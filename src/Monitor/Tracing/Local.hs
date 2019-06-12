@@ -16,7 +16,12 @@ import UnliftIO (MonadUnliftIO)
 --
 -- Spans which start before the action returns are guaranteed to be collected, even if they complete
 -- after (in this case collection will block until their completion). More precisely,
--- 'collectSamples' will return the first time there are no pending spans after the action is done.
+-- 'collectSpanSamples' will return the first time there are no pending spans after the action is
+-- done. For example:
+--
+-- > collectSpanSamples $ rootSpan alwaysSampled "parent" $ do
+-- >   forkIO $ childSpan "child" $ threadDelay 2000000 -- Asynchronous 2 second child span.
+-- >   threadDelay 1000000 -- Returns after one second, but the child span will still be sampled.
 collectSpanSamples :: MonadUnliftIO m => TraceT m a -> m (a, [Sample])
 collectSpanSamples actn = do
   tracer <- newTracer

@@ -20,4 +20,4 @@ run = rootSpan alwaysSampled "parent" $ do
 
 To learn more, hop on over to
 [`Monitor.Tracing`](https://hackage.haskell.org/package/tracing/docs/Monitor-Tracing.html),
-or take a look at examples in the `app/` folder.
+or take a look at examples in the `examples/` folder.

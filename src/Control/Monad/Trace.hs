@@ -128,15 +128,14 @@ instance MonadUnliftIO m => MonadTrace (TraceT m) where
       then do
         tagsTV <- newTVarIO $ builderTags bldr
         logsTV <- newTVarIO []
-        startTV <- newTVarIO Nothing -- To detect whether an exception happened.
+        startTV <- newTVarIO Nothing -- To detect whether an exception happened during span setup.
         let
-          childScope = Scope tracer (Just spn) (Just tagsTV) (Just logsTV)
           run = do
             start <- liftIO $ getPOSIXTime
             atomically $ do
               writeTVar startTV (Just start)
               modifyTVar' (tracerPendingCount tracer) (+1)
-            local (const childScope) reader
+            local (const $ Scope tracer (Just spn) (Just tagsTV) (Just logsTV)) reader
           cleanup = do
             end <- liftIO $ getPOSIXTime
             atomically $ readTVar startTV >>= \case

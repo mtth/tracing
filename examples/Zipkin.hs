@@ -1,17 +1,21 @@
+#!/usr/bin/env stack
+-- stack --install-ghc runghc
+
 {-# LANGUAGE OverloadedStrings #-}
 
--- | A simple tracing example which publishes traces to a local Zipkin server.
+-- | A simple tracing example which publishes traces to a local Zipkin server. Once you have a
+-- working local Zikpin server, can run this script using @stack Zipkin.hs@.
 module Main where
 
 import Control.Monad (void)
 import Control.Monad.Trace.Class (rootSpanWith)
 import Monitor.Tracing
 import qualified Monitor.Tracing.Zipkin as ZPK
-import UnliftIO (MonadUnliftIO, liftIO)
+import UnliftIO (MonadUnliftIO)
 import UnliftIO.Concurrent (forkIO, threadDelay)
 
 example :: (MonadTrace m, MonadUnliftIO m) => m ()
-example = rootSpanWith (ZPK.addInheritedTag "id" "1234") alwaysSampled "something" $ do
+example = rootSpanWith (ZPK.addInheritedTag "id" "1234") alwaysSampled "example" $ do
   ZPK.tag "tag.key1" "a tag value"
   threadDelay 100000
   childSpan "nested1" $ do

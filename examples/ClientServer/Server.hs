@@ -1,3 +1,6 @@
+#!/usr/bin/env stack
+-- stack --install-ghc runghc
+
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -8,7 +11,7 @@
 
 module Main where
 
-import Data.Maybe (maybe)
+import Control.Monad.Trans.Class (lift)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import Monitor.Tracing
@@ -32,20 +35,20 @@ mkYesod "App" [parseRoutes|
 
 instance Yesod App
 
-activeB3 :: Handler (Maybe ZPK.B3)
-activeB3 = maybe Nothing ZPK.b3FromHeaderValue <$> lookupHeader "b3" where
+-- Adds tracing to any handler action.
+serverSpan :: Handler a -> Handler a
+serverSpan actn = lookupHeader "b3" >>= \case
+  Nothing -> actn
+  Just bs -> case ZPK.b3FromHeaderValue bs of
+    Nothing -> fail "bad b3 header"
+    Just b3 -> appZipkin <$> getYesod >>= ZPK.run (ZPK.serverSpan b3 $ lift actn)
 
 getHomeR :: Handler Value
-getHomeR = activeB3 >>= \case
-    Nothing -> returnJson $ Person "Not found" 25
-    Just b3 -> do
-      zipkin <- appZipkin <$> getYesod
-      let actn = ZPK.serverSpan b3 $ returnJson $ Person "James" 25
-      ZPK.run actn zipkin
+getHomeR = serverSpan $ returnJson $ Person "James" 25
 
 main :: IO ()
 main = do
   zipkin <- ZPK.new ZPK.defaultSettings
-    { ZPK.settingsPublishPeriod = Just 10
-    , ZPK.settingsEndpoint = Just "api" { ZPK.endpointPort = Just 3000 } }
+    { ZPK.settingsPublishPeriod = Just 10 -- Auto-publish spans every 10 seconds.
+    , ZPK.settingsEndpoint = Just "api" }
   warp 3000 (App zipkin)

@@ -1,4 +1,4 @@
-# Tracing
+# Tracing [![Stackage LTS](https://stackage.org/package/tracing/badge/lts)](https://stackage.org/lts/package/tracing) [![Stackage Nightly](https://stackage.org/package/tracing/badge/nightly)](https://stackage.org/nightly/package/tracing) [![Hackage](https://img.shields.io/hackage/v/tracing.svg)](https://hackage.haskell.org/package/tracing)
 
 An [OpenTracing](https://opentracing.io/)-compliant, simple, and extensible
 distributed tracing library.

@@ -1,5 +1,5 @@
 name:                tracing
-version:             0.0.4.0
+version:             0.0.4.1
 synopsis:            Distributed tracing
 description:         An OpenTracing-compliant, simple, and extensible distributed tracing library.
 homepage:            https://github.com/mtth/tracing

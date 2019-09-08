@@ -56,7 +56,7 @@ import System.Random (randomRIO)
 
 -- | A monad capable of generating and modifying trace spans.
 --
--- There are currently two instances of this monad:
+-- This package currently provides two instances of this class:
 --
 -- * 'Control.Monad.Trace.TraceT', which emits spans for each trace in 'IO' and is meant to be used
 -- in production.
@@ -64,7 +64,9 @@ import System.Random (randomRIO)
 -- or complex setup.
 class Monad m => MonadTrace m where
 
-  -- | Trace an action, wrapping it inside a new span.
+  -- | Trace an action, wrapping it inside a new span. If the action isn't currently being traced,
+  -- 'trace' should be a no-op. Otherwise, the new span should share the active span's trace ID,
+  -- sampling decision, and baggages unless overridden by the input 'Builder'.
   trace :: Builder -> m a -> m a
 
   -- | Extracts the currently active span, or 'Nothing' if the action is not being traced.
@@ -77,28 +79,28 @@ class Monad m => MonadTrace m where
   default addSpanEntry :: (MonadTrace n, MonadTrans t, m ~ t n) => Key -> Value -> m ()
   addSpanEntry key = lift . addSpanEntry key
 
-instance (Monad m, MonadTrace m) => MonadTrace (ExceptT e m) where
+instance MonadTrace m => MonadTrace (ExceptT e m) where
   trace name (ExceptT actn) = ExceptT $ trace name actn
 
-instance (Monad m, MonadTrace m) => MonadTrace (ReaderT r m) where
+instance MonadTrace m => MonadTrace (ReaderT r m) where
   trace name (ReaderT actn) = ReaderT $ \r -> trace name (actn r)
 
-instance (Monad m, MonadTrace m, Monoid w) => MonadTrace (RWS.Lazy.RWST r w s m) where
+instance (MonadTrace m, Monoid w) => MonadTrace (RWS.Lazy.RWST r w s m) where
   trace name (RWS.Lazy.RWST actn) = RWS.Lazy.RWST $ \r s -> trace name (actn r s)
 
-instance (Monad m, MonadTrace m, Monoid w) => MonadTrace (RWS.Strict.RWST r w s m) where
+instance (MonadTrace m, Monoid w) => MonadTrace (RWS.Strict.RWST r w s m) where
   trace name (RWS.Strict.RWST actn) = RWS.Strict.RWST $ \r s -> trace name (actn r s)
 
-instance (Monad m, MonadTrace m) => MonadTrace (State.Lazy.StateT s m) where
+instance MonadTrace m => MonadTrace (State.Lazy.StateT s m) where
   trace name (State.Lazy.StateT actn) = State.Lazy.StateT $ \s -> trace name (actn s)
 
-instance (Monad m, MonadTrace m) => MonadTrace (State.Strict.StateT s m) where
+instance MonadTrace m => MonadTrace (State.Strict.StateT s m) where
   trace name (State.Strict.StateT actn) = State.Strict.StateT $ \s -> trace name (actn s)
 
-instance (Monad m, MonadTrace m, Monoid w) => MonadTrace (Writer.Lazy.WriterT w m) where
+instance (MonadTrace m, Monoid w) => MonadTrace (Writer.Lazy.WriterT w m) where
   trace name (Writer.Lazy.WriterT actn) = Writer.Lazy.WriterT $ trace name actn
 
-instance (Monad m, MonadTrace m, Monoid w) => MonadTrace (Writer.Strict.WriterT w m) where
+instance (MonadTrace m, Monoid w) => MonadTrace (Writer.Strict.WriterT w m) where
   trace name (Writer.Strict.WriterT actn) = Writer.Strict.WriterT $ trace name actn
 
 instance MonadTrace Identity where

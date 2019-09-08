@@ -34,6 +34,7 @@ import Control.Monad.Reader (ReaderT(..), ask, asks, local, runReaderT)
 import Control.Monad.Reader.Class (MonadReader)
 import Control.Monad.Trans.Class (MonadTrans(..))
 import qualified Data.Aeson as JSON
+import Data.Foldable (for_)
 import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -50,7 +51,7 @@ type Tags = Map Key JSON.Value
 -- | A collection of span logs.
 type Logs = [(POSIXTime, Key, JSON.Value)]
 
--- | A sampled span, and its associated metadata.
+-- | A sampled span and its associated metadata.
 data Sample = Sample
   { sampleSpan :: !Span
   -- ^ The sampled span.
@@ -150,15 +151,13 @@ instance MonadUnliftIO m => MonadTrace (TraceT m) where
 
   activeSpan = TraceT $ asks scopeSpan
 
-  addSpanEntry key (TagValue val) = TraceT $ asks scopeTags >>= \case
-    Nothing -> pure ()
-    Just tv -> atomically $ modifyTVar' tv $ Map.insert key val
-  addSpanEntry key (LogValue val maybeTime)  = TraceT $ asks scopeLogs >>= \case
-    Nothing -> pure ()
-    Just tv -> do
-      time <- case maybeTime of
-        Nothing -> liftIO getPOSIXTime
-        Just time' -> pure time'
+  addSpanEntry key (TagValue val) = TraceT $ do
+    mbTV <- asks scopeTags
+    for_ mbTV $ \tv -> atomically $ modifyTVar' tv $ Map.insert key val
+  addSpanEntry key (LogValue val mbTime)  = TraceT $ do
+    mbTV <- asks scopeLogs
+    for_ mbTV $ \tv -> do
+      time <- maybe (liftIO getPOSIXTime) pure mbTime
       atomically $ modifyTVar' tv ((time, key, val) :)
 
 instance MonadUnliftIO m => MonadUnliftIO (TraceT m) where

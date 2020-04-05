@@ -63,8 +63,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Data.Time.Clock.POSIX (POSIXTime)
-import Net.IPv4 (IPv4)
-import Net.IPv6 (IPv6)
 import Network.HTTP.Client (Manager, Request)
 import qualified Network.HTTP.Client as HTTP
 import Network.Socket (HostName, PortNumber)
@@ -369,9 +367,9 @@ data Endpoint = Endpoint
   -- ^ The endpoint's service name.
   , endpointPort :: !(Maybe Int)
   -- ^ The endpoint's port, if applicable and known.
-  , endpointIPv4 :: !(Maybe IPv4)
+  , endpointIPv4 :: !(Maybe Text)
   -- ^ The endpoint's IPv4 address.
-  , endpointIPv6 :: !(Maybe IPv6)
+  , endpointIPv6 :: !(Maybe Text)
   -- ^ The endpoint's IPv6 address.
   } deriving (Eq, Ord, Show)
 

@@ -19,7 +19,7 @@ extra-source-files: README.md
 
 source-repository head
   type: git
-  location: https://github.com/mtth/yx
+  location: https://github.com/mtth/tracing
 
 library
   hs-source-dirs: src
@@ -31,7 +31,6 @@ library
     , Monitor.Tracing.Zipkin
   other-modules:
       Control.Monad.Trace.Internal
-  -- unliftio-core bound for https://github.com/fpco/unliftio/issues/55
   build-depends:
       aeson >= 1.4
     , base >= 4.9 && < 5

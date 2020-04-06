@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -57,6 +58,9 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe, maybeToList)
 import Data.Monoid (Endo(..))
+#if !MIN_VERSION_base(4, 11, 0)
+import Data.Semigroup ((<>))
+#endif
 import Data.Set (Set)
 import Data.String (IsString(..))
 import Data.Text (Text)

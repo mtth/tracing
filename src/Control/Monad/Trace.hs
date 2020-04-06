@@ -30,9 +30,9 @@ import Control.Monad.Trace.Internal
 
 import Control.Applicative ((<|>))
 import Control.Monad.IO.Class (MonadIO, liftIO)
-import Control.Monad.Reader (ReaderT(..), ask, asks, local, runReaderT)
+import Control.Monad.Reader (ReaderT(ReaderT), ask, asks, local, runReaderT)
 import Control.Monad.Reader.Class (MonadReader)
-import Control.Monad.Trans.Class (MonadTrans(..))
+import Control.Monad.Trans.Class (MonadTrans, lift)
 import qualified Data.Aeson as JSON
 import Data.Foldable (for_)
 import Data.List (sortOn)
@@ -41,7 +41,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Time.Clock (NominalDiffTime)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
-import UnliftIO (MonadUnliftIO, UnliftIO(..), askUnliftIO, withUnliftIO)
+import UnliftIO (MonadUnliftIO, withRunInIO)
 import UnliftIO.Exception (finally)
 import UnliftIO.STM (TChan, TVar, atomically, modifyTVar', newTChanIO, newTVarIO, readTVar, writeTChan, writeTVar)
 
@@ -161,7 +161,7 @@ instance MonadUnliftIO m => MonadTrace (TraceT m) where
       atomically $ modifyTVar' tv ((time, key, val) :)
 
 instance MonadUnliftIO m => MonadUnliftIO (TraceT m) where
-  askUnliftIO = TraceT $ withUnliftIO $ \u -> pure (UnliftIO (unliftIO u . traceTReader ))
+  withRunInIO inner = TraceT $ withRunInIO $ \run -> inner (run . traceTReader)
 
 -- | Trace an action, sampling its generated spans. This method is thread-safe and can be used to
 -- trace multiple actions concurrently.

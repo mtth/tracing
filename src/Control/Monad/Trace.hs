@@ -29,10 +29,15 @@ import Control.Monad.Trace.Class
 import Control.Monad.Trace.Internal
 
 import Control.Applicative ((<|>))
+import Control.Monad.Base (MonadBase)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (ReaderT(ReaderT), ask, asks, local, runReaderT)
 import Control.Monad.Reader.Class (MonadReader)
+import Control.Monad.Error.Class (MonadError)
+import Control.Monad.State.Class (MonadState)
 import Control.Monad.Trans.Class (MonadTrans, lift)
+import Control.Monad.Trans.Control (MonadBaseControl)
+import Control.Monad.Writer.Class (MonadWriter)
 import qualified Data.Aeson as JSON
 import Data.Foldable (for_)
 import Data.List (sortOn)
@@ -102,7 +107,9 @@ data Scope = Scope
 
 -- | A span generation monad.
 newtype TraceT m a = TraceT { traceTReader :: ReaderT (Maybe Scope) m a }
-  deriving (Functor, Applicative, Monad, MonadIO, MonadTrans)
+  deriving ( Functor, Applicative, Monad, MonadTrans
+           , MonadWriter w, MonadState s, MonadError e
+           , MonadIO, MonadBase b, MonadBaseControl b )
 
 instance MonadReader r m => MonadReader r (TraceT m) where
   ask = lift ask

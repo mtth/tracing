@@ -1,7 +1,7 @@
 cabal-version: 2.0
 
 name: tracing
-version: 0.0.7.2
+version: 0.0.5.2
 synopsis: Distributed tracing
 description:
   An OpenTracing-compliant, simple, and extensible distributed tracing library.
@@ -39,6 +39,7 @@ library
     , case-insensitive >= 1.2
     , containers >= 0.6
     , http-client >= 0.5
+    , monad-control >= 1.0
     , mtl >= 2.2
     , network >= 2.8
     , random >= 1.1
@@ -46,6 +47,7 @@ library
     , text >= 1.2
     , time >= 1.8 && < 1.10
     , transformers >= 0.5
+    , transformers-base >= 0.4
     , unliftio >= 0.2
   ghc-options: -Wall
   default-language: Haskell2010

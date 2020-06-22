@@ -1,7 +1,12 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ImpredicativeTypes #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}         -- For the MonadBaseControl instance.
 {-# LANGUAGE UndecidableInstances #-} -- For the MonadReader instance.
 
 -- | This module is useful mostly for tracing backend implementors. If you are only interested in
@@ -38,9 +43,10 @@ import Control.Monad.Reader.Class (MonadReader)
 import Control.Monad.Error.Class (MonadError)
 import Control.Monad.State.Class (MonadState)
 import Control.Monad.Trans.Class (MonadTrans, lift)
-import Control.Monad.Trans.Control (MonadBaseControl)
+import Control.Monad.Trans.Control (MonadBaseControl(..), RunInBase)
 import Control.Monad.Writer.Class (MonadWriter)
 import qualified Data.Aeson as JSON
+import Data.Coerce
 import Data.Foldable (for_)
 import Data.List (sortOn)
 import Data.Map.Strict (Map)
@@ -108,11 +114,23 @@ data Scope = Scope
 newtype TraceT m a = TraceT { traceTReader :: ReaderT (Maybe Scope) m a }
   deriving ( Functor, Applicative, Monad, MonadTrans
            , MonadWriter w, MonadState s, MonadError e
-           , MonadIO, MonadBase b, MonadBaseControl b )
+           , MonadIO, MonadBase b )
 
 instance MonadReader r m => MonadReader r (TraceT m) where
   ask = lift ask
   local f (TraceT (ReaderT g)) = TraceT $ ReaderT $ \r -> local f $ g r
+
+-- Cannot be derived in GHC 8.0 due to type family.
+instance MonadBaseControl b m => MonadBaseControl b (TraceT m) where
+  type StM (TraceT m) a = StM (ReaderT Scope m) a
+  liftBaseWith :: forall a. (RunInBase (TraceT m) b -> b a) -> TraceT m a
+  liftBaseWith
+    = coerce @((RunInBase (ReaderT Scope m) b -> b a) -> ReaderT Scope m a)
+             liftBaseWith
+  restoreM :: forall a. StM (TraceT m) a -> TraceT m a
+  restoreM
+    = coerce @(StM (ReaderT Scope m) a -> ReaderT Scope m a)
+             restoreM
 
 instance (MonadIO m, MonadBaseControl IO m) => MonadTrace (TraceT m) where
   trace bldr (TraceT reader) = TraceT $ do

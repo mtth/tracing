@@ -39,16 +39,17 @@ library
     , case-insensitive >= 1.2
     , containers >= 0.6
     , http-client >= 0.5
+    , lifted-base >= 0.2
     , monad-control >= 1.0
     , mtl >= 2.2
     , network >= 2.8
     , random >= 1.1
     , stm >= 2.5
+    , stm-lifted >= 2.5
     , text >= 1.2
     , time >= 1.8 && < 1.10
     , transformers >= 0.5
     , transformers-base >= 0.4
-    , unliftio >= 0.2
   ghc-options: -Wall
   default-language: Haskell2010
 

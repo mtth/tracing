@@ -1,4 +1,6 @@
-# Tracing [![Stackage LTS](https://stackage.org/package/tracing/badge/lts)](https://stackage.org/lts/package/tracing) [![Stackage Nightly](https://stackage.org/package/tracing/badge/nightly)](https://stackage.org/nightly/package/tracing) [![Hackage](https://img.shields.io/hackage/v/tracing.svg)](https://hackage.haskell.org/package/tracing) [![Build Status](https://travis-ci.org/mtth/tracing.svg?branch=master)](https://travis-ci.org/mtth/tracing)
+# Tracing [![Hackage](https://img.shields.io/hackage/v/tracing-control.svg)](https://hackage.haskell.org/package/tracing-control)
+
+**Important note**: this is a fork of the original [tracing](https://github.com/mtth/tracing) library in which `unliftio` has been replaced by `monad-control`.
 
 An [OpenTracing](https://opentracing.io/)-compliant, simple, and extensible
 distributed tracing library.

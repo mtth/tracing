@@ -7,7 +7,7 @@ description:
   An OpenTracing-compliant, simple, and extensible distributed tracing library.
 
   This is a fork of <http://hackage.haskell.org/package/tracing tracing> which
-  switches from <unliftio http://hackage.haskell.org/package/unliftio> to
+  switches from <http://hackage.haskell.org/package/unliftio unliftio> to
   <http://hackage.haskell.org/package/monad-control monad-control>.
 
 category: Web

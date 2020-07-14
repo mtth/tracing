@@ -14,7 +14,7 @@
 module Control.Monad.Trace (
   -- * Tracers
   Tracer, newTracer,
-  runTraceT, runTraceT', TraceT,
+  runTraceT, runTraceT', TraceT(..),
 
   -- * Collected data
   -- | Tracers currently expose two pieces of data: completed spans and pending span count. Note

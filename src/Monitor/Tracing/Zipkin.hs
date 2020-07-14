@@ -132,6 +132,7 @@ new (Settings mbHostname mbPort mbEpt mbMgr mbPrd) = liftIO $ do
     req = HTTP.defaultRequest
       { HTTP.method = "POST"
       , HTTP.host = BS.pack (fromMaybe "localhost" mbHostname)
+      , HTTP.requestHeaders = [("Content-Type", "application/json")]
       , HTTP.path = "/api/v2/spans"
       , HTTP.port = maybe 9411 fromIntegral mbPort
       , HTTP.requestHeaders = [("content-type", "application/json")]

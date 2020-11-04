@@ -34,7 +34,7 @@ library
   build-depends:
       aeson >= 1.4
     , base >= 4.9 && < 5
-    , base16-bytestring >= 0.1
+    , base16-bytestring >= 1.0
     , bytestring >= 0.10
     , case-insensitive >= 1.2
     , containers >= 0.6

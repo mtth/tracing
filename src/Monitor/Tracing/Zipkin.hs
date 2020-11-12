@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -43,9 +44,11 @@ import Control.Monad.Trace.Class
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.STM (atomically, tryReadTChan)
+import Control.Exception.Lifted (finally)
 import Control.Monad (forever, guard, void, when)
 import Control.Monad.Fix (fix)
 import Control.Monad.IO.Class (MonadIO, liftIO)
+import Control.Monad.Trans.Control (MonadBaseControl)
 import qualified Data.Aeson as JSON
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
@@ -70,8 +73,6 @@ import Data.Time.Clock.POSIX (POSIXTime)
 import Network.HTTP.Client (Manager, Request)
 import qualified Network.HTTP.Client as HTTP
 import Network.Socket (HostName, PortNumber)
-import UnliftIO (MonadUnliftIO)
-import UnliftIO.Exception (finally)
 
 -- | 'Zipkin' creation settings.
 data Settings = Settings
@@ -130,6 +131,7 @@ new (Settings mbHostname mbPort mbEpt mbMgr mbPrd) = liftIO $ do
     req = HTTP.defaultRequest
       { HTTP.method = "POST"
       , HTTP.host = BS.pack (fromMaybe "localhost" mbHostname)
+      , HTTP.requestHeaders = [("Content-Type", "application/json")]
       , HTTP.path = "/api/v2/spans"
       , HTTP.port = maybe 9411 fromIntegral mbPort
       , HTTP.requestHeaders = [("content-type", "application/json")]
@@ -153,7 +155,8 @@ publish z =
   liftIO $ flushSpans (zipkinEndpoint z) (zipkinTracer z) (zipkinRequest z) (zipkinManager z)
 
 -- | Convenience method to start a 'Zipkin', run an action, and publish all spans before returning.
-with :: MonadUnliftIO m => Settings -> (Zipkin -> m a) -> m a
+with :: (MonadIO m, MonadBaseControl IO m)
+     => Settings -> (Zipkin -> m a) -> m a
 with settings f = do
   zipkin <- new settings
   f zipkin `finally` publish zipkin

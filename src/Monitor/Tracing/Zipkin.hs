@@ -131,7 +131,9 @@ new (Settings mbHostname mbPort mbEpt mbMgr mbPrd) = liftIO $ do
       { HTTP.method = "POST"
       , HTTP.host = BS.pack (fromMaybe "localhost" mbHostname)
       , HTTP.path = "/api/v2/spans"
-      , HTTP.port = maybe 9411 fromIntegral mbPort }
+      , HTTP.port = maybe 9411 fromIntegral mbPort
+      , HTTP.requestHeaders = [("content-type", "application/json")]
+      }
   void $ let prd = fromMaybe 0 mbPrd in if prd <= 0
     then pure Nothing
     else fmap Just $ forkIO $ forever $ do

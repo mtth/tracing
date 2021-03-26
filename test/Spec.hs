@@ -14,6 +14,7 @@ import Control.Monad.Reader (MonadReader, Reader, ReaderT, ask, runReader, runRe
 import Control.Monad.State.Strict (MonadState, StateT, evalStateT, get)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
+import qualified Data.Set as Set
 import Test.Hspec
 import Test.Hspec.QuickCheck
 import UnliftIO
@@ -66,6 +67,14 @@ main = hspec $ do
         Just b3 = ZPK.b3FromHeaderValue bs
         Just b3' = ZPK.b3FromHeaders hdrs
       b3 `shouldBe` b3'
+    it "consumerSpan should use B3 as parent reference" $ do
+      let
+        bs = "80f198ee56343ba864fe8b2a57d3eff7-e457b5a2e4d86bd1-1-05e3ac9a4f6e3b90"
+        Just b3 = ZPK.b3FromHeaderValue bs
+      [consumerSpan] <- collectSpans $ ZPK.consumerSpanWith id b3 $ pure ()
+      contextTraceID (spanContext consumerSpan) `shouldBe` ZPK.b3TraceID b3            -- same traceId
+      contextSpanID (spanContext consumerSpan) `shouldNotBe` ZPK.b3SpanID b3           -- different spanId
+      spanReferences consumerSpan `shouldBe` Set.singleton (ChildOf $ ZPK.b3SpanID b3) -- b3 spanId is parent
   describe "collectSpanSamples" $ do
     it "should collect spans which are still pending after the action returns" $ do
       spans <- collectSpans $ rootSpan alwaysSampled "sleep-parent" $ do

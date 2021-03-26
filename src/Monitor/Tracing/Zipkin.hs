@@ -62,6 +62,7 @@ import Data.Monoid (Endo(..))
 import Data.Semigroup ((<>))
 #endif
 import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.String (IsString(..))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -296,14 +297,21 @@ insertTag key val =
   Endo $ \bldr -> bldr { builderTags = Map.insert key (JSON.toJSON val) (builderTags bldr) }
 
 importB3 :: B3 -> Endo Builder
-importB3 b3 =
+importB3 b3 = importB3traceAndPolicy b3 <> 
+              Endo (\bldr -> bldr { builderSpanID = Just (b3SpanID b3) })
+
+importB3asParent :: B3 -> Endo Builder
+importB3asParent b3 = importB3traceAndPolicy b3 <> 
+                      Endo (\bldr -> bldr { builderReferences = Set.singleton (ChildOf $ b3SpanID b3) })
+
+importB3traceAndPolicy :: B3 -> Endo Builder
+importB3traceAndPolicy b3 =
   let
     policy = if b3IsDebug b3
       then debugEnabled
       else sampledWhen $ b3IsSampled b3
   in Endo $ \bldr -> bldr
     { builderTraceID = Just (b3TraceID b3)
-    , builderSpanID = Just (b3SpanID b3)
     , builderSamplingPolicy = Just policy }
 
 publicKeyPrefix :: Text
@@ -348,9 +356,9 @@ clientSpanWith f = outgoingSpan "CLIENT" (Endo f)
 producerSpanWith :: MonadTrace m => (Builder -> Builder) -> Name -> (Maybe B3 -> m a) -> m a
 producerSpanWith f = outgoingSpan "PRODUCER" (Endo f)
 
-incomingSpan :: MonadTrace m => Text -> Endo Builder -> B3 -> m a -> m a
-incomingSpan kind endo b3 actn =
-  let bldr = appEndo (importB3 b3 <> insertTag kindKey kind <> endo) $ builder ""
+incomingSpan :: MonadTrace m => Text -> Endo Builder -> m a -> m a
+incomingSpan kind endo actn =
+  let bldr = appEndo (insertTag kindKey kind <> endo) $ builder ""
   in trace bldr actn
 
 -- | Generates a child span with @SERVER@ kind. The client's 'B3' should be provided as input,
@@ -361,11 +369,11 @@ serverSpan = serverSpanWith id
 -- | Generates a server span, optionally modifying the span's builder. This can be useful in
 -- combination with 'addEndpoint' if the remote client does not have tracing enabled.
 serverSpanWith :: MonadTrace m => (Builder -> Builder) -> B3 -> m a -> m a
-serverSpanWith f = incomingSpan "SERVER" (Endo f)
+serverSpanWith f b3 = incomingSpan "SERVER" (importB3 b3 <> Endo f)
 
 -- | Generates a child span with @CONSUMER@ kind. The producer's 'B3' should be provided as input.
 consumerSpanWith :: MonadTrace m => (Builder -> Builder) -> B3 -> m a -> m a
-consumerSpanWith f = incomingSpan "CONSUMER" (Endo f)
+consumerSpanWith f b3 = incomingSpan "CONSUMER" (importB3asParent b3 <> Endo f)
 
 -- | Information about a hosted service, included in spans and visible in the Zipkin UI.
 data Endpoint = Endpoint

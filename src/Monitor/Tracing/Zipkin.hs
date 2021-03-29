@@ -297,15 +297,7 @@ insertTag key val =
   Endo $ \bldr -> bldr { builderTags = Map.insert key (JSON.toJSON val) (builderTags bldr) }
 
 importB3 :: B3 -> Endo Builder
-importB3 b3 = importB3traceAndPolicy b3 <> 
-              Endo (\bldr -> bldr { builderSpanID = Just (b3SpanID b3) })
-
-importB3asParent :: B3 -> Endo Builder
-importB3asParent b3 = importB3traceAndPolicy b3 <> 
-                      Endo (\bldr -> bldr { builderReferences = Set.singleton (ChildOf $ b3SpanID b3) })
-
-importB3traceAndPolicy :: B3 -> Endo Builder
-importB3traceAndPolicy b3 =
+importB3 b3 =
   let
     policy = if b3IsDebug b3
       then debugEnabled
@@ -366,14 +358,18 @@ incomingSpan kind endo actn =
 serverSpan :: MonadTrace m => B3 -> m a -> m a
 serverSpan = serverSpanWith id
 
--- | Generates a server span, optionally modifying the span's builder. This can be useful in
+-- | Generates a child span with @SERVER@ kind, optionally modifying the span's builder. This can be useful in
 -- combination with 'addEndpoint' if the remote client does not have tracing enabled.
+-- The clients's 'B3' should be provided as input.
+-- Client and server annotations go on the same span - it means that they share their span ID.
 serverSpanWith :: MonadTrace m => (Builder -> Builder) -> B3 -> m a -> m a
-serverSpanWith f b3 = incomingSpan "SERVER" (importB3 b3 <> Endo f)
+serverSpanWith f b3 = incomingSpan "SERVER" (importB3 b3 <> Endo (\bldr -> f $ bldr { builderSpanID = Just (b3SpanID b3) }))
 
--- | Generates a child span with @CONSUMER@ kind. The producer's 'B3' should be provided as input.
+-- | Generates a child span with @CONSUMER@ kind, optionally modifying the span's builder.
+-- The producer's 'B3' should be provided as input.
+-- The generated span will have its parent ID set to the input B3's span ID.
 consumerSpanWith :: MonadTrace m => (Builder -> Builder) -> B3 -> m a -> m a
-consumerSpanWith f b3 = incomingSpan "CONSUMER" (importB3asParent b3 <> Endo f)
+consumerSpanWith f b3 = incomingSpan "CONSUMER" (importB3 b3 <> Endo (\bldr -> f $ bldr { builderReferences = Set.singleton (ChildOf $ b3SpanID b3) }))
 
 -- | Information about a hosted service, included in spans and visible in the Zipkin UI.
 data Endpoint = Endpoint

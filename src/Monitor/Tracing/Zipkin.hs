@@ -348,9 +348,9 @@ clientSpanWith f = outgoingSpan "CLIENT" (Endo f)
 producerSpanWith :: MonadTrace m => (Builder -> Builder) -> Name -> (Maybe B3 -> m a) -> m a
 producerSpanWith f = outgoingSpan "PRODUCER" (Endo f)
 
-incomingSpan :: MonadTrace m => Text -> Endo Builder -> m a -> m a
-incomingSpan kind endo actn =
-  let bldr = appEndo (insertTag kindKey kind <> endo) $ builder ""
+incomingSpan :: MonadTrace m => Text -> B3 -> Endo Builder -> m a -> m a
+incomingSpan kind b3 endo actn =
+  let bldr = appEndo (insertTag kindKey kind <> importB3 b3 <> endo) $ builder ""
   in trace bldr actn
 
 -- | Generates a child span with @SERVER@ kind. The client's 'B3' should be provided as input,
@@ -363,13 +363,13 @@ serverSpan = serverSpanWith id
 -- The clients's 'B3' should be provided as input. Client and server annotations go on the same
 -- span - it means that they share their span ID.
 serverSpanWith :: MonadTrace m => (Builder -> Builder) -> B3 -> m a -> m a
-serverSpanWith f b3 = incomingSpan "SERVER" (importB3 b3 <> Endo (\bldr -> f $ bldr { builderSpanID = Just (b3SpanID b3) }))
+serverSpanWith f b3 = incomingSpan "SERVER" b3 (Endo (\bldr -> f $ bldr { builderSpanID = Just (b3SpanID b3) }))
 
 -- | Generates a child span with @CONSUMER@ kind, optionally modifying the span's builder. The
 -- producer's 'B3' should be provided as input. The generated span will have its parent ID set to
 -- the input B3's span ID.
 consumerSpanWith :: MonadTrace m => (Builder -> Builder) -> B3 -> m a -> m a
-consumerSpanWith f b3 = incomingSpan "CONSUMER" (importB3 b3 <> Endo (\bldr -> f $ bldr { builderReferences = Set.singleton (ChildOf $ b3SpanID b3) }))
+consumerSpanWith f b3 = incomingSpan "CONSUMER" b3 (Endo (\bldr -> f $ bldr { builderReferences = Set.singleton (ChildOf $ b3SpanID b3) }))
 
 -- | Information about a hosted service, included in spans and visible in the Zipkin UI.
 data Endpoint = Endpoint

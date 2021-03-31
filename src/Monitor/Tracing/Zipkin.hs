@@ -62,6 +62,7 @@ import Data.Monoid (Endo(..))
 import Data.Semigroup ((<>))
 #endif
 import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.String (IsString(..))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -303,7 +304,6 @@ importB3 b3 =
       else sampledWhen $ b3IsSampled b3
   in Endo $ \bldr -> bldr
     { builderTraceID = Just (b3TraceID b3)
-    , builderSpanID = Just (b3SpanID b3)
     , builderSamplingPolicy = Just policy }
 
 publicKeyPrefix :: Text
@@ -348,9 +348,9 @@ clientSpanWith f = outgoingSpan "CLIENT" (Endo f)
 producerSpanWith :: MonadTrace m => (Builder -> Builder) -> Name -> (Maybe B3 -> m a) -> m a
 producerSpanWith f = outgoingSpan "PRODUCER" (Endo f)
 
-incomingSpan :: MonadTrace m => Text -> Endo Builder -> B3 -> m a -> m a
-incomingSpan kind endo b3 actn =
-  let bldr = appEndo (importB3 b3 <> insertTag kindKey kind <> endo) $ builder ""
+incomingSpan :: MonadTrace m => Text -> B3 -> Endo Builder -> m a -> m a
+incomingSpan kind b3 endo actn =
+  let bldr = appEndo (insertTag kindKey kind <> importB3 b3 <> endo) $ builder ""
   in trace bldr actn
 
 -- | Generates a child span with @SERVER@ kind. The client's 'B3' should be provided as input,
@@ -358,14 +358,18 @@ incomingSpan kind endo b3 actn =
 serverSpan :: MonadTrace m => B3 -> m a -> m a
 serverSpan = serverSpanWith id
 
--- | Generates a server span, optionally modifying the span's builder. This can be useful in
--- combination with 'addEndpoint' if the remote client does not have tracing enabled.
+-- | Generates a child span with @SERVER@ kind, optionally modifying the span's builder. This can
+-- be useful in combination with 'addEndpoint' if the remote client does not have tracing enabled.
+-- The clients's 'B3' should be provided as input. Client and server annotations go on the same
+-- span - it means that they share their span ID.
 serverSpanWith :: MonadTrace m => (Builder -> Builder) -> B3 -> m a -> m a
-serverSpanWith f = incomingSpan "SERVER" (Endo f)
+serverSpanWith f b3 = incomingSpan "SERVER" b3 (Endo (\bldr -> f $ bldr { builderSpanID = Just (b3SpanID b3) }))
 
--- | Generates a child span with @CONSUMER@ kind. The producer's 'B3' should be provided as input.
+-- | Generates a child span with @CONSUMER@ kind, optionally modifying the span's builder. The
+-- producer's 'B3' should be provided as input. The generated span will have its parent ID set to
+-- the input B3's span ID.
 consumerSpanWith :: MonadTrace m => (Builder -> Builder) -> B3 -> m a -> m a
-consumerSpanWith f = incomingSpan "CONSUMER" (Endo f)
+consumerSpanWith f b3 = incomingSpan "CONSUMER" b3 (Endo (\bldr -> f $ bldr { builderReferences = Set.singleton (ChildOf $ b3SpanID b3) }))
 
 -- | Information about a hosted service, included in spans and visible in the Zipkin UI.
 data Endpoint = Endpoint

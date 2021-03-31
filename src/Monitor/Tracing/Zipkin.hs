@@ -167,7 +167,7 @@ tag key val = addSpanEntry (publicKeyPrefix <> key) (tagTextValue val)
 --
 -- > childSpanWith (addTag "key" "value") "run" $ action
 --
--- Note that there is not difference with adding the tag after the span. So the above code is
+-- Note that there is no difference with adding the tag after the span. So the above code is
 -- equivalent to:
 --
 -- > childSpan "run" $ tag "key" "value" >> action
@@ -306,6 +306,7 @@ importB3 b3 =
     { builderTraceID = Just (b3TraceID b3)
     , builderSamplingPolicy = Just policy }
 
+-- Prefix added to all user tags. This protects against collisions with internal tags.
 publicKeyPrefix :: Text
 publicKeyPrefix = "Z."
 
@@ -316,8 +317,6 @@ endpointKey = "z.e"
 -- Kind tag key.
 kindKey :: Key
 kindKey = "z.k"
-
--- Internal keys
 
 outgoingSpan :: MonadTrace m => Text -> Endo Builder -> Name -> (Maybe B3 -> m a) -> m a
 outgoingSpan kind endo name f = childSpanWith (appEndo endo') name actn where
@@ -363,13 +362,17 @@ serverSpan = serverSpanWith id
 -- The clients's 'B3' should be provided as input. Client and server annotations go on the same
 -- span - it means that they share their span ID.
 serverSpanWith :: MonadTrace m => (Builder -> Builder) -> B3 -> m a -> m a
-serverSpanWith f b3 = incomingSpan "SERVER" b3 (Endo (\bldr -> f $ bldr { builderSpanID = Just (b3SpanID b3) }))
+serverSpanWith f b3 =
+  let endo = Endo $ \bldr -> f $ bldr { builderSpanID = Just (b3SpanID b3) }
+  in incomingSpan "SERVER" b3 endo
 
 -- | Generates a child span with @CONSUMER@ kind, optionally modifying the span's builder. The
 -- producer's 'B3' should be provided as input. The generated span will have its parent ID set to
 -- the input B3's span ID.
 consumerSpanWith :: MonadTrace m => (Builder -> Builder) -> B3 -> m a -> m a
-consumerSpanWith f b3 = incomingSpan "CONSUMER" b3 (Endo (\bldr -> f $ bldr { builderReferences = Set.singleton (ChildOf $ b3SpanID b3) }))
+consumerSpanWith f b3 =
+  let endo = Endo $ \bldr -> f $ bldr { builderReferences = Set.singleton (ChildOf $ b3SpanID b3) }
+  in incomingSpan "CONSUMER" b3 endo
 
 -- | Information about a hosted service, included in spans and visible in the Zipkin UI.
 data Endpoint = Endpoint

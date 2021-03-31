@@ -1,7 +1,7 @@
 cabal-version: 1.12
 
 name: tracing
-version: 0.0.5.2
+version: 0.0.6.0
 synopsis: Distributed tracing
 description:
   An OpenTracing-compliant, simple, and extensible distributed tracing library.

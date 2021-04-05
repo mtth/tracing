@@ -132,7 +132,7 @@ randomID len = BS.pack <$> replicateM len randomIO
 
 hexDecode :: Text-> Maybe ByteString
 hexDecode t = case Base16.decode $ BS.Char8.pack $ T.unpack t of
-  (bs, trail) | BS.null trail -> Just bs
+  Right bs -> Just bs
   _ -> Nothing
 
 hexEncode :: ByteString -> Text

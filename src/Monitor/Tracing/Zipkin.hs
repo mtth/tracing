@@ -1,4 +1,5 @@
 {-# LANGUAGE CPP #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -18,9 +19,16 @@ module Monitor.Tracing.Zipkin (
   -- ** Endpoint
   Endpoint(..), defaultEndpoint,
 
-  -- * Publishing traces
+  -- * Tracing actions and publishing traces
+  -- ** Automatically
   Zipkin,
-  new, run, publish, with,
+  new, with,
+  PublishFailed(..),
+
+  -- ** Manually
+  -- | When more flexibility is needed, it's possible to control when traces are published by using
+  -- the functions below.
+  run, publish, publishSpans,
 
   -- * Cross-process spans
   -- ** Communication
@@ -41,19 +49,17 @@ module Monitor.Tracing.Zipkin (
 import Control.Monad.Trace
 import Control.Monad.Trace.Class
 
-import Control.Concurrent (forkIO, threadDelay)
-import Control.Concurrent.STM (atomically, tryReadTChan)
-import Control.Monad (forever, guard, void, when)
-import Control.Monad.Fix (fix)
+import Control.Concurrent.STM (flushTQueue)
+import Control.Exception (Exception, SomeException, throw)
+import Control.Monad (forever, guard, mfilter, void, when)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import qualified Data.Aeson as JSON
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
 import Data.CaseInsensitive (CI)
 import Data.Time.Clock (NominalDiffTime)
-import Data.Foldable (toList)
+import Data.Foldable (for_, toList)
 import Data.Int (Int64)
-import Data.IORef (modifyIORef, newIORef, readIORef)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe, maybeToList)
@@ -72,7 +78,9 @@ import Network.HTTP.Client (Manager, Request)
 import qualified Network.HTTP.Client as HTTP
 import Network.Socket (HostName, PortNumber)
 import UnliftIO (MonadUnliftIO)
-import UnliftIO.Exception (finally)
+import UnliftIO.Concurrent (forkIO, threadDelay)
+import UnliftIO.Exception (catch, finally)
+import UnliftIO.STM (atomically)
 
 -- | 'Zipkin' creation settings.
 data Settings = Settings
@@ -111,17 +119,6 @@ data Zipkin = Zipkin
   , zipkinEndpoint :: !(Maybe Endpoint)
   }
 
-flushSpans :: Maybe Endpoint -> Tracer -> Request -> Manager -> IO ()
-flushSpans ept tracer req mgr = do
-  ref <- newIORef []
-  fix $ \loop -> atomically (tryReadTChan $ spanSamples tracer) >>= \case
-    Nothing -> pure ()
-    Just sample -> modifyIORef ref (ZipkinSpan ept sample:) >> loop
-  spns <- readIORef ref
-  when (not $ null spns) $ do
-    let req' = req { HTTP.requestBody = HTTP.RequestBodyLBS $ JSON.encode spns }
-    void $ HTTP.httpLbs req' mgr
-
 -- | Creates a 'Zipkin' publisher for the input 'Settings'.
 new :: MonadIO m => Settings -> m Zipkin
 new (Settings mbHostname mbPort mbEpt mbMgr mbPrd) = liftIO $ do
@@ -135,12 +132,11 @@ new (Settings mbHostname mbPort mbEpt mbMgr mbPrd) = liftIO $ do
       , HTTP.port = maybe 9411 fromIntegral mbPort
       , HTTP.requestHeaders = [("content-type", "application/json")]
       }
-  void $ let prd = fromMaybe 0 mbPrd in if prd <= 0
-    then pure Nothing
-    else fmap Just $ forkIO $ forever $ do
-      threadDelay (microSeconds prd)
-      flushSpans mbEpt tracer req mgr -- Manager is thread-safe.
-  pure $ Zipkin mgr req tracer mbEpt
+    zpk = Zipkin mgr req tracer mbEpt
+  for_ (microSeconds <$> mfilter (> 0) mbPrd) $ \delay -> forkIO $ forever $ do
+    threadDelay delay
+    publish zpk
+  pure zpk
 
 -- | Runs a 'TraceT' action, sampling spans appropriately. Note that this method does not publish
 -- spans on its own; to do so, either call 'publish' manually or specify a positive
@@ -148,10 +144,30 @@ new (Settings mbHostname mbPort mbEpt mbMgr mbPrd) = liftIO $ do
 run :: TraceT m a -> Zipkin -> m a
 run actn zipkin = runTraceT actn (zipkinTracer zipkin)
 
--- | Flushes all complete spans to the Zipkin server.
-publish :: MonadIO m => Zipkin -> m ()
-publish z =
-  liftIO $ flushSpans (zipkinEndpoint z) (zipkinTracer z) (zipkinRequest z) (zipkinManager z)
+-- | Error thrown when span publication failed, for example if the server is unreachable. The error
+-- exposes the underlying cause as well as the spans which could not be flushed.
+data PublishFailed = forall e. Exception e => PublishFailed [ZipkinSpan] e
+
+instance Show PublishFailed where
+  show (PublishFailed _ e) = "PublishFailed: " <> show e
+
+instance Exception PublishFailed
+
+-- | Flushes the given spans to the Zipkin server. This function is a no-op when input is empty. If
+-- publication failed, this function will throw a 'PublishFailed' exception.
+publishSpans :: MonadUnliftIO m => Zipkin -> [ZipkinSpan] -> m ()
+publishSpans zpk spns = when (not $ null spns) $
+  let
+    req = (zipkinRequest zpk) { HTTP.requestBody = HTTP.RequestBodyLBS $ JSON.encode spns }
+    send = void $ liftIO $ HTTP.httpLbs req (zipkinManager zpk)
+  in catch send $ \e -> throw (PublishFailed spns (e :: SomeException))
+
+-- | Flushes all complete spans to the Zipkin server. See 'publishSpans' for error handling.
+publish :: MonadUnliftIO m => Zipkin -> m ()
+publish zpk = liftIO $ do
+  let mbEpt = zipkinEndpoint zpk
+  samples <- atomically $ flushTQueue $ spanSamples $ zipkinTracer zpk
+  publishSpans zpk $ fmap (ZipkinSpan mbEpt) samples
 
 -- | Convenience method to start a 'Zipkin', run an action, and publish all spans before returning.
 with :: MonadUnliftIO m => Settings -> (Zipkin -> m a) -> m a
@@ -421,8 +437,8 @@ instance JSON.ToJSON ZipkinAnnotation where
     [ "timestamp" JSON..= microSeconds @Int64 t
     , "value" JSON..= v ]
 
--- Internal type used to encode spans in the <https://zipkin.apache.org/zipkin-api/#/ format>
--- expected by Zipkin.
+-- Type used to encode spans in the <https://zipkin.apache.org/zipkin-api/#/ format> expected by
+-- Zipkin.
 data ZipkinSpan = ZipkinSpan !(Maybe Endpoint) !Sample
 
 publicTags :: Tags -> Map Text JSON.Value

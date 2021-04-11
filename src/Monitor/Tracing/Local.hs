@@ -4,10 +4,12 @@ module Monitor.Tracing.Local (
   collectSpanSamples
 ) where
 
-import Control.Concurrent.STM (atomically, readTVar, readTChan, tryReadTChan)
+import Control.Concurrent.STM (atomically, readTVar, flushTQueue, readTQueue)
+import Control.Monad (when)
 import Control.Monad.Fix (fix)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trace
+import Data.Foldable (for_)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import UnliftIO (MonadUnliftIO)
 
@@ -26,16 +28,15 @@ collectSpanSamples :: MonadUnliftIO m => TraceT m a -> m (a, [Sample])
 collectSpanSamples actn = do
   tracer <- newTracer
   rv <- runTraceT actn tracer
-  ref <- liftIO $ newIORef []
-  let
-    addSample spl = liftIO $ modifyIORef' ref (spl:)
-    samplesTC = spanSamples tracer
-    pendingTV = pendingSpanCount tracer
-  liftIO $ fix $ \loop -> do
-    (mbSample, pending) <- atomically $ (,) <$> tryReadTChan samplesTC <*> readTVar pendingTV
-    case mbSample of
-      Just spl -> addSample spl >> loop
-      Nothing | pending > 0 -> liftIO (atomically $ readTChan samplesTC) >>= addSample >> loop
-      _ -> pure ()
-  spls <- reverse <$> liftIO (readIORef ref)
-  pure (rv, spls)
+  liftIO $ do
+    ref <- newIORef []
+    let
+      addSample spl = modifyIORef' ref (spl:)
+      samplesTQ = spanSamples tracer
+      pendingTV = pendingSpanCount tracer
+    fix $ \loop -> do
+      (samples, pending) <- atomically $ (,) <$> flushTQueue samplesTQ <*> readTVar pendingTV
+      for_ samples addSample
+      when (pending > 0) $ (atomically $ readTQueue samplesTQ) >>= addSample >> loop
+    spls <- reverse <$> readIORef ref
+    pure (rv, spls)

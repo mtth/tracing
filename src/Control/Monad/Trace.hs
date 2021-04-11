@@ -43,7 +43,7 @@ import Data.Time.Clock (NominalDiffTime)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import UnliftIO (MonadUnliftIO, withRunInIO)
 import UnliftIO.Exception (finally)
-import UnliftIO.STM (TChan, TVar, atomically, modifyTVar', newTChanIO, newTVarIO, readTVar, writeTChan, writeTVar)
+import UnliftIO.STM (TQueue, TVar, atomically, modifyTVar', newTQueueIO, newTVarIO, readTVar, writeTQueue, writeTVar)
 
 -- | A collection of span tags.
 type Tags = Map Key JSON.Value
@@ -76,13 +76,13 @@ data Sample = Sample
 -- These samples can then be consumed independently, decoupling downstream span processing from
 -- their production.
 data Tracer = Tracer
-  { tracerChannel :: TChan Sample
-  , tracerPendingCount :: TVar Int
+  { tracerChannel :: !(TQueue Sample)
+  , tracerPendingCount :: !(TVar Int)
   }
 
 -- | Creates a new 'Tracer'.
 newTracer :: MonadIO m => m Tracer
-newTracer = liftIO $ Tracer <$> newTChanIO <*> newTVarIO 0
+newTracer = liftIO $ Tracer <$> newTQueueIO <*> newTVarIO 0
 
 -- | Returns the number of spans currently in flight (started but not yet completed).
 pendingSpanCount :: Tracer -> TVar Int
@@ -90,7 +90,7 @@ pendingSpanCount = tracerPendingCount
 
 -- | Returns all newly completed spans' samples. The samples become available in the same order they
 -- are completed.
-spanSamples :: Tracer -> TChan Sample
+spanSamples :: Tracer -> TQueue Sample
 spanSamples = tracerChannel
 
 data Scope = Scope
@@ -145,7 +145,7 @@ instance MonadUnliftIO m => MonadTrace (TraceT m) where
                 modifyTVar' (tracerPendingCount tracer) (\n -> n - 1)
                 tags <- readTVar tagsTV
                 logs <- sortOn (\(t, k, _) -> (t, k)) <$> readTVar logsTV
-                writeTChan (tracerChannel tracer) (Sample spn tags logs start (end - start))
+                writeTQueue (tracerChannel tracer) (Sample spn tags logs start (end - start))
         run `finally` cleanup
       else local (const $ Scope tracer (Just spn) Nothing Nothing) reader
 

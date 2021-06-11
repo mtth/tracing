@@ -24,13 +24,13 @@ module Monitor.Tracing.Zipkin (
 
   -- * Cross-process spans
   -- ** Communication
-  B3(..), b3ToHeaders, b3FromHeaders, b3ToHeaderValue, b3FromHeaderValue,
+  B3(..), b3ToHeaders, b3FromHeaders, b3ToHeaderValue, b3FromHeaderValue, b3FromSpan,
   -- ** Span generation
   clientSpan, clientSpanWith, serverSpan, serverSpanWith, producerSpanWith, consumerSpanWith,
 
   -- * Custom metadata
   -- ** Tags
-  tag, addTag, addInheritedTag,
+  tag, addTag, addInheritedTag, addProducerTag,
   -- ** Annotations
   -- | Annotations are similar to tags, but timestamped.
   annotate, annotateAt,
@@ -173,6 +173,14 @@ tag key val = addSpanEntry (publicKeyPrefix <> key) (tagTextValue val)
 -- > childSpan "run" $ tag "key" "value" >> action
 addTag :: Text -> Text -> Builder -> Builder
 addTag key val bldr = bldr { builderTags = Map.insert key (JSON.toJSON val) (builderTags bldr) }
+
+-- | Adds a producer kind tag to a builder. This is a convenience method to use with 'rootSpanWith', for example:
+--
+-- > rootSpanWith addProducerTag alwaysSampled "root" $ action
+--
+-- Please use this method only if you need to create a root producer span.
+addProducerTag :: Builder -> Builder
+addProducerTag = addTag kindKey "PRODUCER"
 
 -- | Adds an inherited tag to a builder. Unlike a tag added via 'addTag', this tag:
 --

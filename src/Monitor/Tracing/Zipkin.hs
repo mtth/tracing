@@ -172,7 +172,8 @@ tag key val = addSpanEntry (publicKeyPrefix <> key) (tagTextValue val)
 --
 -- > childSpan "run" $ tag "key" "value" >> action
 addTag :: Text -> Text -> Builder -> Builder
-addTag key val bldr = bldr { builderTags = Map.insert key (JSON.toJSON val) (builderTags bldr) }
+addTag key val bldr =
+  bldr { builderTags = Map.insert (publicKeyPrefix <> key) (JSON.toJSON val) (builderTags bldr) }
 
 -- | Adds an inherited tag to a builder. Unlike a tag added via 'addTag', this tag:
 --

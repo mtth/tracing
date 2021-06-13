@@ -9,7 +9,7 @@
 module Control.Monad.Trace (
   -- * Tracers
   Tracer, newTracer,
-  runTraceT, TraceT,
+  runTraceT, runTraceT', TraceT,
 
   -- * Collected data
   -- | Tracers currently expose two pieces of data: completed spans and pending span count. Note
@@ -101,7 +101,7 @@ data Scope = Scope
   }
 
 -- | A span generation monad.
-newtype TraceT m a = TraceT { traceTReader :: ReaderT Scope m a }
+newtype TraceT m a = TraceT { traceTReader :: ReaderT (Maybe Scope) m a }
   deriving (Functor, Applicative, Monad, MonadIO, MonadTrans)
 
 instance MonadReader r m => MonadReader r (TraceT m) where
@@ -109,53 +109,55 @@ instance MonadReader r m => MonadReader r (TraceT m) where
   local f (TraceT (ReaderT g)) = TraceT $ ReaderT $ \r -> local f $ g r
 
 instance MonadUnliftIO m => MonadTrace (TraceT m) where
-  trace bldr (TraceT reader) = TraceT $ do
-    parentScope <- ask
-    let
-      mbParentSpn = scopeSpan parentScope
-      mbParentCtx = spanContext <$> mbParentSpn
-      mbTraceID = contextTraceID <$> mbParentCtx
-    spanID <- maybe (liftIO randomSpanID) pure $ builderSpanID bldr
-    traceID <- maybe (liftIO randomTraceID) pure $ builderTraceID bldr <|> mbTraceID
-    sampling <- case builderSamplingPolicy bldr of
-      Just policy -> liftIO policy
-      Nothing -> pure $ fromMaybe Never (spanSamplingDecision <$> mbParentSpn)
-    let
-      baggages = fromMaybe Map.empty $ contextBaggages <$> mbParentCtx
-      ctx = Context traceID spanID (builderBaggages bldr `Map.union` baggages)
-      spn = Span (builderName bldr) ctx (builderReferences bldr) sampling
-      tracer = scopeTracer parentScope
-    if spanIsSampled spn
-      then do
-        tagsTV <- newTVarIO $ builderTags bldr
-        logsTV <- newTVarIO []
-        startTV <- newTVarIO Nothing -- To detect whether an exception happened during span setup.
-        let
-          run = do
-            start <- liftIO $ getPOSIXTime
-            atomically $ do
-              writeTVar startTV (Just start)
-              modifyTVar' (tracerPendingCount tracer) (+1)
-            local (const $ Scope tracer (Just spn) (Just tagsTV) (Just logsTV)) reader
-          cleanup = do
-            end <- liftIO $ getPOSIXTime
-            atomically $ readTVar startTV >>= \case
-              Nothing -> pure () -- The action was interrupted before the span was pending.
-              Just start -> do
-                modifyTVar' (tracerPendingCount tracer) (\n -> n - 1)
-                tags <- readTVar tagsTV
-                logs <- sortOn (\(t, k, _) -> (t, k)) <$> readTVar logsTV
-                writeTChan (tracerChannel tracer) (Sample spn tags logs start (end - start))
-        run `finally` cleanup
-      else local (const $ Scope tracer (Just spn) Nothing Nothing) reader
+  trace bldr (TraceT reader) = TraceT $ ask >>= \case
+    Nothing -> reader
+    Just parentScope -> do
+      let
+        mbParentSpn = scopeSpan parentScope
+        mbParentCtx = spanContext <$> mbParentSpn
+        mbTraceID = contextTraceID <$> mbParentCtx
+      spanID <- maybe (liftIO randomSpanID) pure $ builderSpanID bldr
+      traceID <- maybe (liftIO randomTraceID) pure $ builderTraceID bldr <|> mbTraceID
+      sampling <- case builderSamplingPolicy bldr of
+        Just policy -> liftIO policy
+        Nothing -> pure $ fromMaybe Never (spanSamplingDecision <$> mbParentSpn)
+      let
+        baggages = fromMaybe Map.empty $ contextBaggages <$> mbParentCtx
+        ctx = Context traceID spanID (builderBaggages bldr `Map.union` baggages)
+        spn = Span (builderName bldr) ctx (builderReferences bldr) sampling
+        tracer = scopeTracer parentScope
+      if spanIsSampled spn
+        then do
+          tagsTV <- newTVarIO $ builderTags bldr
+          logsTV <- newTVarIO []
+          startTV <- newTVarIO Nothing -- To detect whether an exception happened during span setup.
+          let
+            scope = Scope tracer (Just spn) (Just tagsTV) (Just logsTV)
+            run = do
+              start <- liftIO $ getPOSIXTime
+              atomically $ do
+                writeTVar startTV (Just start)
+                modifyTVar' (tracerPendingCount tracer) (+1)
+              local (const $ Just scope) reader
+            cleanup = do
+              end <- liftIO $ getPOSIXTime
+              atomically $ readTVar startTV >>= \case
+                Nothing -> pure () -- The action was interrupted before the span was pending.
+                Just start -> do
+                  modifyTVar' (tracerPendingCount tracer) (\n -> n - 1)
+                  tags <- readTVar tagsTV
+                  logs <- sortOn (\(t, k, _) -> (t, k)) <$> readTVar logsTV
+                  writeTChan (tracerChannel tracer) (Sample spn tags logs start (end - start))
+          run `finally` cleanup
+        else local (const $ Just $ Scope tracer (Just spn) Nothing Nothing) reader
 
-  activeSpan = TraceT $ asks scopeSpan
+  activeSpan = TraceT $ asks (>>= scopeSpan)
 
   addSpanEntry key (TagValue val) = TraceT $ do
-    mbTV <- asks scopeTags
+    mbTV <- asks (>>= scopeTags)
     for_ mbTV $ \tv -> atomically $ modifyTVar' tv $ Map.insert key val
   addSpanEntry key (LogValue val mbTime)  = TraceT $ do
-    mbTV <- asks scopeLogs
+    mbTV <- asks (>>= scopeLogs)
     for_ mbTV $ \tv -> do
       time <- maybe (liftIO getPOSIXTime) pure mbTime
       atomically $ modifyTVar' tv ((time, key, val) :)
@@ -170,5 +172,13 @@ instance MonadUnliftIO m => MonadUnliftIO (TraceT m) where
 -- method explicitly. Instead, prefer to use the backend's functionality directly (e.g.
 -- 'Monitor.Tracing.Zipkin.run' for Zipkin). To ease debugging in certain cases,
 -- 'Monitor.Tracing.Local.collectSpanSamples' is also available.
+--
+-- See 'runTraceT'' for a variant which allows discarding spans.
 runTraceT :: TraceT m a -> Tracer -> m a
-runTraceT (TraceT reader) tracer = runReaderT reader (Scope tracer Nothing Nothing Nothing)
+runTraceT actn tracer = runTraceT' actn (Just tracer)
+
+-- | Maybe trace an action. If the tracer is 'Nothing', no spans will be published.
+runTraceT' :: TraceT m a -> Maybe Tracer -> m a
+runTraceT' (TraceT reader) mbTracer =
+  let scope = fmap (\tracer -> Scope tracer Nothing Nothing Nothing) mbTracer
+  in runReaderT reader scope

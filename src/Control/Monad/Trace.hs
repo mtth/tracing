@@ -35,7 +35,6 @@ import Control.Monad.Reader.Class (MonadReader)
 import Control.Monad.Trans.Class (MonadTrans, lift)
 import qualified Data.Aeson as JSON
 import Data.Foldable (for_)
-import Data.Functor ((<&>))
 import Data.List (sortOn)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -181,5 +180,5 @@ runTraceT actn tracer = runTraceT' actn (Just tracer)
 -- | Maybe trace an action. If the tracer is 'Nothing', no spans will be published.
 runTraceT' :: TraceT m a -> Maybe Tracer -> m a
 runTraceT' (TraceT reader) mbTracer =
-  let scope = mbTracer <&> \tracer -> Scope tracer Nothing Nothing Nothing
+  let scope = fmap (\tracer -> Scope tracer Nothing Nothing Nothing) mbTracer
   in runReaderT reader scope

@@ -9,6 +9,7 @@ import Monitor.Tracing
 import Monitor.Tracing.Local (collectSpanSamples)
 import qualified Monitor.Tracing.Zipkin as ZPK
 
+import Control.Monad.IO.Class (liftIO, MonadIO)
 import Control.Monad (void)
 import Control.Monad.Reader (MonadReader, Reader, ReaderT, ask, runReader, runReaderT)
 import Control.Monad.State.Strict (MonadState, StateT, evalStateT, get)
@@ -36,13 +37,25 @@ main = hspec $ do
           pure $ s + r
         v = runReader (evalStateT actn 1) 2
       v `shouldBe` 3
+
+    it "should be runnable in IO without a tracer" $ do
+      let
+        actn :: (MonadIO m, MonadTrace m) => m Int
+        actn = trace "one" $ do
+          r <- liftIO $ newIORef 1
+          trace "two" $ liftIO (readIORef r)
+      v <- runTraceT' actn Nothing
+      v `shouldBe` 1
+
   describe "trace" $ do
     it "should not create spans when no traces are started" $ do
       spans <- collectSpans $ pure ()
       fmap spanName spans `shouldBe` []
+
     it "should collect a single span when no children are created" $ do
       spans <- collectSpans (trace "t" { builderSamplingPolicy = Just alwaysSampled } $ pure ())
       fmap spanName spans `shouldBe` ["t"]
+
     it "should be able to stack on top of a ReaderT" $ do
       let
         actn = trace "t" { builderSamplingPolicy = Just alwaysSampled } $ do
@@ -50,12 +63,14 @@ main = hspec $ do
           trace (builder name) $ pure ()
       spans <- runReaderT (collectSpans @(ReaderT Text IO) actn) "foo"
       fmap spanName spans `shouldBe` ["foo", "t"]
+
   describe "Zipkin" $ do
     it "should round-trip a B3 using a single header" $ do
       let
         bs = "80f198ee56343ba864fe8b2a57d3eff7-e457b5a2e4d86bd1-1-05e3ac9a4f6e3b90"
         mbBs = ZPK.b3ToHeaderValue <$> ZPK.b3FromHeaderValue bs
       mbBs `shouldBe` Just bs
+
     it "should have equivalent B3 header representations" $ do
       let
         bs = "80f198ee56343ba864fe8b2a57d3eff7-e457b5a2e4d86bd1-1-05e3ac9a4f6e3b90"
@@ -67,6 +82,7 @@ main = hspec $ do
         Just b3 = ZPK.b3FromHeaderValue bs
         Just b3' = ZPK.b3FromHeaders hdrs
       b3 `shouldBe` b3'
+
     it "consumerSpan should use B3 as parent reference" $ do
       let
         bs = "80f198ee56343ba864fe8b2a57d3eff7-e457b5a2e4d86bd1-1-05e3ac9a4f6e3b90"
@@ -75,6 +91,7 @@ main = hspec $ do
       contextTraceID (spanContext consumerSpan) `shouldBe` ZPK.b3TraceID b3            -- same traceId
       contextSpanID (spanContext consumerSpan) `shouldNotBe` ZPK.b3SpanID b3           -- different spanId
       spanReferences consumerSpan `shouldBe` Set.singleton (ChildOf $ ZPK.b3SpanID b3) -- b3 spanId is parent
+
   describe "collectSpanSamples" $ do
     it "should collect spans which are still pending after the action returns" $ do
       spans <- collectSpans $ rootSpan alwaysSampled "sleep-parent" $ do

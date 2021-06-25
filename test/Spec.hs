@@ -71,6 +71,12 @@ main = hspec $ do
         mbBs = ZPK.b3ToHeaderValue <$> ZPK.b3FromHeaderValue bs
       mbBs `shouldBe` Just bs
 
+    it "should round-trip a B3 using a single header with a 16 lower-hex character TraceId" $ do
+      let
+        bs = "64fe8b2a57d3eff7-e457b5a2e4d86bd1-1-05e3ac9a4f6e3b90"
+        mbBs = ZPK.b3ToHeaderValue <$> ZPK.b3FromHeaderValue bs
+      mbBs `shouldBe` Just bs
+
     it "should have equivalent B3 header representations" $ do
       let
         bs = "80f198ee56343ba864fe8b2a57d3eff7-e457b5a2e4d86bd1-1-05e3ac9a4f6e3b90"

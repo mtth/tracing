@@ -222,7 +222,7 @@ debugHeader = "X-B3-Flags"
 b3ToHeaders :: B3 -> Map (CI ByteString) ByteString
 b3ToHeaders (B3 traceID spanID isSampled isDebug mbParentID) =
   let
-    defaultKVs = [(traceIDHeader, encodeTraceID traceID), (spanIDHeader, encodeSpanID spanID)]
+    defaultKVs = [(traceIDHeader, encodeZipkinTraceID traceID), (spanIDHeader, encodeSpanID spanID)]
     parentKVs = (parentSpanIDHeader,) . encodeSpanID <$> maybeToList mbParentID
     sampledKVs = case (isSampled, isDebug) of
       (_, True) -> [(debugHeader, "1")]
@@ -244,7 +244,7 @@ b3FromHeaders hdrs = do
   sampled <- findBool dbg sampledHeader
   guard (not $ sampled == False && dbg)
   B3
-    <$> (find traceIDHeader >>= decodeTraceID)
+    <$> (find traceIDHeader >>= decodeZipkinTraceID)
     <*> (find spanIDHeader >>= decodeSpanID)
     <*> pure sampled
     <*> pure dbg
@@ -259,15 +259,25 @@ b3ToHeaderValue (B3 traceID spanID isSampled isDebug mbParentID) =
       (_ , True) -> "d"
       (True, _) -> "1"
       (False, _) -> "0"
-    required = [encodeTraceID traceID, encodeSpanID spanID, state]
+    required = [encodeZipkinTraceID traceID, encodeSpanID spanID, state]
     optional = encodeSpanID <$> maybeToList mbParentID
   in BS.intercalate "-" $ fmap T.encodeUtf8 $ required ++ optional
+
+-- | Takes into account that the first position of the b3 value is the 32 or 16 lower-hex character TraceId.
+decodeZipkinTraceID :: Text -> Maybe TraceID
+decodeZipkinTraceID txt | T.length txt == 16 = decodeTraceID $ "0000000000000000" <> txt
+                        | otherwise = decodeTraceID txt
+
+-- | Takes into account that the first position of the b3 value is the 32 or 16 lower-hex character TraceId.
+encodeZipkinTraceID :: TraceID -> Text
+encodeZipkinTraceID traceId = let txt = encodeTraceID traceId
+                              in fromMaybe txt $ T.stripPrefix "0000000000000000" txt
 
 -- | Deserializes a single header value into a 'B3'.
 b3FromHeaderValue :: ByteString -> Maybe B3
 b3FromHeaderValue bs = case T.splitOn "-" $ T.decodeUtf8 bs of
   (traceIDstr:spanIDstr:strs) -> do
-    traceID <- decodeTraceID traceIDstr
+    traceID <- decodeZipkinTraceID traceIDstr
     spanID <- decodeSpanID spanIDstr
     let buildB3 = B3 traceID spanID
     case strs of

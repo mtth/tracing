@@ -30,7 +30,7 @@ module Monitor.Tracing.Zipkin (
 
   -- * Custom metadata
   -- ** Tags
-  tag, addTag, addInheritedTag, addProducerTag,
+  tag, addTag, addInheritedTag, addProducerKind,
   -- ** Annotations
   -- | Annotations are similar to tags, but timestamped.
   annotate, annotateAt,
@@ -176,11 +176,12 @@ addTag key val bldr = bldr { builderTags = Map.insert key (JSON.toJSON val) (bui
 
 -- | Adds a producer kind tag to a builder. This is a convenience method to use with 'rootSpanWith', for example:
 --
--- > rootSpanWith addProducerTag alwaysSampled "root" $ action
+-- > rootSpanWith addProducerKind alwaysSampled "root" $ action
 --
--- Please use this method only if you need to create a root producer span.
-addProducerTag :: Builder -> Builder
-addProducerTag = addTag kindKey "PRODUCER"
+-- Use this method if you want to create a root producer span.
+-- Otherwise use 'producerSpanWith' to create a sub span with producer kind.
+addProducerKind :: Builder -> Builder
+addProducerKind = addTag kindKey producerKindValue
 
 -- | Adds an inherited tag to a builder. Unlike a tag added via 'addTag', this tag:
 --
@@ -326,6 +327,10 @@ endpointKey = "z.e"
 kindKey :: Key
 kindKey = "z.k"
 
+-- Value that indicates a producer span kind.
+producerKindValue :: Text
+producerKindValue = "PRODUCER"
+
 outgoingSpan :: MonadTrace m => Text -> Endo Builder -> Name -> (Maybe B3 -> m a) -> m a
 outgoingSpan kind endo name f = childSpanWith (appEndo endo') name actn where
   endo' = insertTag kindKey kind <> endo
@@ -353,7 +358,7 @@ clientSpanWith f = outgoingSpan "CLIENT" (Endo f)
 -- | Generates a child span with @PRODUCER@ kind. This function also provides the corresponding 'B3'
 -- so that it can be forwarded to the consumer.
 producerSpanWith :: MonadTrace m => (Builder -> Builder) -> Name -> (Maybe B3 -> m a) -> m a
-producerSpanWith f = outgoingSpan "PRODUCER" (Endo f)
+producerSpanWith f = outgoingSpan producerKindValue (Endo f)
 
 incomingSpan :: MonadTrace m => Text -> B3 -> Endo Builder -> m a -> m a
 incomingSpan kind b3 endo actn =

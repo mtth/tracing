@@ -24,13 +24,13 @@ module Monitor.Tracing.Zipkin (
 
   -- * Cross-process spans
   -- ** Communication
-  B3(..), b3ToHeaders, b3FromHeaders, b3ToHeaderValue, b3FromHeaderValue,
+  B3(..), b3ToHeaders, b3FromHeaders, b3ToHeaderValue, b3FromHeaderValue, b3FromSpan,
   -- ** Span generation
   clientSpan, clientSpanWith, serverSpan, serverSpanWith, producerSpanWith, consumerSpanWith,
 
   -- * Custom metadata
   -- ** Tags
-  tag, addTag, addInheritedTag,
+  tag, addTag, addInheritedTag, addProducerKind,
   -- ** Annotations
   -- | Annotations are similar to tags, but timestamped.
   annotate, annotateAt,
@@ -174,6 +174,15 @@ tag key val = addSpanEntry (publicKeyPrefix <> key) (tagTextValue val)
 addTag :: Text -> Text -> Builder -> Builder
 addTag key val bldr =
   bldr { builderTags = Map.insert (publicKeyPrefix <> key) (JSON.toJSON val) (builderTags bldr) }
+
+-- | Adds a producer kind tag to a builder. This is a convenience method to use with 'rootSpanWith', for example:
+--
+-- > rootSpanWith addProducerKind alwaysSampled "root" $ action
+--
+-- Use this method if you want to create a root producer span.
+-- Otherwise use 'producerSpanWith' to create a sub span with producer kind.
+addProducerKind :: Builder -> Builder
+addProducerKind = addTag kindKey producerKindValue
 
 -- | Adds an inherited tag to a builder. Unlike a tag added via 'addTag', this tag:
 --
@@ -319,6 +328,10 @@ endpointKey = "z.e"
 kindKey :: Key
 kindKey = "z.k"
 
+-- Value that indicates a producer span kind.
+producerKindValue :: Text
+producerKindValue = "PRODUCER"
+
 outgoingSpan :: MonadTrace m => Text -> Endo Builder -> Name -> (Maybe B3 -> m a) -> m a
 outgoingSpan kind endo name f = childSpanWith (appEndo endo') name actn where
   endo' = insertTag kindKey kind <> endo
@@ -346,7 +359,7 @@ clientSpanWith f = outgoingSpan "CLIENT" (Endo f)
 -- | Generates a child span with @PRODUCER@ kind. This function also provides the corresponding 'B3'
 -- so that it can be forwarded to the consumer.
 producerSpanWith :: MonadTrace m => (Builder -> Builder) -> Name -> (Maybe B3 -> m a) -> m a
-producerSpanWith f = outgoingSpan "PRODUCER" (Endo f)
+producerSpanWith f = outgoingSpan producerKindValue (Endo f)
 
 incomingSpan :: MonadTrace m => Text -> B3 -> Endo Builder -> m a -> m a
 incomingSpan kind b3 endo actn =

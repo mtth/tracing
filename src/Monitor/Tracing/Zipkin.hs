@@ -231,7 +231,7 @@ debugHeader = "X-B3-Flags"
 b3ToHeaders :: B3 -> Map (CI ByteString) ByteString
 b3ToHeaders (B3 traceID spanID isSampled isDebug mbParentID) =
   let
-    defaultKVs = [(traceIDHeader, encodeTraceID traceID), (spanIDHeader, encodeSpanID spanID)]
+    defaultKVs = [(traceIDHeader, encodeZipkinTraceID traceID), (spanIDHeader, encodeSpanID spanID)]
     parentKVs = (parentSpanIDHeader,) . encodeSpanID <$> maybeToList mbParentID
     sampledKVs = case (isSampled, isDebug) of
       (_, True) -> [(debugHeader, "1")]
@@ -253,7 +253,7 @@ b3FromHeaders hdrs = do
   sampled <- findBool dbg sampledHeader
   guard (not $ sampled == False && dbg)
   B3
-    <$> (find traceIDHeader >>= decodeTraceID)
+    <$> (find traceIDHeader >>= decodeZipkinTraceID)
     <*> (find spanIDHeader >>= decodeSpanID)
     <*> pure sampled
     <*> pure dbg
@@ -268,15 +268,36 @@ b3ToHeaderValue (B3 traceID spanID isSampled isDebug mbParentID) =
       (_ , True) -> "d"
       (True, _) -> "1"
       (False, _) -> "0"
-    required = [encodeTraceID traceID, encodeSpanID spanID, state]
+    required = [encodeZipkinTraceID traceID, encodeSpanID spanID, state]
     optional = encodeSpanID <$> maybeToList mbParentID
   in BS.intercalate "-" $ fmap T.encodeUtf8 $ required ++ optional
+
+-- | Prefix used to fill up 128-bit if only a 64-bit trace identifier is given.
+shortTraceIDPrefix :: Text
+shortTraceIDPrefix = "0000000000000000"
+
+-- | Decodes a zipkin trace ID from a hex-encoded string, returning nothing if it is invalid.
+-- Takes into account that the provided string could be a 16 or 32 lower-hex character trace ID.
+-- If the given string consists of 16 lower-hex characters 'shortTraceIDPrefix' is used to fil
+-- up the 128-bit trace identifier of 'TraceID'.
+decodeZipkinTraceID :: Text -> Maybe TraceID
+decodeZipkinTraceID txt =
+  let normalized = if T.length txt == 16 then shortTraceIDPrefix <> txt else txt
+  in decodeTraceID normalized
+
+-- | Hex-encodes a trace ID.
+-- Provides a 16 or 32 lower-hex character zipkin trace ID.
+-- A 16 lower-hex character string is returned if the first 64-bits of the 'TraceID' are zeros.
+encodeZipkinTraceID :: TraceID -> Text
+encodeZipkinTraceID traceID =
+  let txt = encodeTraceID traceID
+  in fromMaybe txt $ T.stripPrefix shortTraceIDPrefix txt
 
 -- | Deserializes a single header value into a 'B3'.
 b3FromHeaderValue :: ByteString -> Maybe B3
 b3FromHeaderValue bs = case T.splitOn "-" $ T.decodeUtf8 bs of
   (traceIDstr:spanIDstr:strs) -> do
-    traceID <- decodeTraceID traceIDstr
+    traceID <- decodeZipkinTraceID traceIDstr
     spanID <- decodeSpanID spanIDstr
     let buildB3 = B3 traceID spanID
     case strs of

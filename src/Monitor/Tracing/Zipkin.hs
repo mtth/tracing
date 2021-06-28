@@ -175,12 +175,13 @@ addTag :: Text -> Text -> Builder -> Builder
 addTag key val bldr =
   bldr { builderTags = Map.insert (publicKeyPrefix <> key) (JSON.toJSON val) (builderTags bldr) }
 
--- | Adds a producer kind tag to a builder. This is a convenience method to use with 'rootSpanWith', for example:
+-- | Adds a producer kind tag to a builder. This is a convenience method to use with 'rootSpanWith',
+-- for example:
 --
 -- > rootSpanWith addProducerKind alwaysSampled "root" $ action
 --
--- Use this method if you want to create a root producer span.
--- Otherwise use 'producerSpanWith' to create a sub span with producer kind.
+-- Use this method if you want to create a root producer span. Otherwise use 'producerSpanWith' to
+-- create a sub span with producer kind.
 addProducerKind :: Builder -> Builder
 addProducerKind = addTag kindKey producerKindValue
 
@@ -276,18 +277,17 @@ b3ToHeaderValue (B3 traceID spanID isSampled isDebug mbParentID) =
 shortTraceIDPrefix :: Text
 shortTraceIDPrefix = "0000000000000000"
 
--- | Decodes a zipkin trace ID from a hex-encoded string, returning nothing if it is invalid.
--- Takes into account that the provided string could be a 16 or 32 lower-hex character trace ID.
--- If the given string consists of 16 lower-hex characters 'shortTraceIDPrefix' is used to fil
--- up the 128-bit trace identifier of 'TraceID'.
+-- | Decodes a zipkin trace ID from a hex-encoded string, returning nothing if it is invalid. Takes
+-- into account that the provided string could be a 16 or 32 lower-hex character trace ID. If the
+-- given string consists of 16 lower-hex characters 'shortTraceIDPrefix' is used to fil up the
+-- 128-bit trace identifier of 'TraceID'.
 decodeZipkinTraceID :: Text -> Maybe TraceID
 decodeZipkinTraceID txt =
   let normalized = if T.length txt == 16 then shortTraceIDPrefix <> txt else txt
   in decodeTraceID normalized
 
--- | Hex-encodes a trace ID.
--- Provides a 16 or 32 lower-hex character zipkin trace ID.
--- A 16 lower-hex character string is returned if the first 64-bits of the 'TraceID' are zeros.
+-- | Hex-encodes a trace ID, providing a 16 or 32 lower-hex character zipkin trace ID. A 16
+-- lower-hex character string is returned if the first 64-bits of the 'TraceID' are zeros.
 encodeZipkinTraceID :: TraceID -> Text
 encodeZipkinTraceID traceID =
   let txt = encodeTraceID traceID

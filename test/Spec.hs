@@ -13,6 +13,7 @@ import Control.Monad.IO.Class (liftIO, MonadIO)
 import Control.Monad (void)
 import Control.Monad.Reader (MonadReader, Reader, ReaderT, ask, runReader, runReaderT)
 import Control.Monad.State.Strict (MonadState, StateT, evalStateT, get)
+import Data.IORef
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Set as Set

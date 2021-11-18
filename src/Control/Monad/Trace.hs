@@ -125,55 +125,56 @@ instance MonadBaseControl b m => MonadBaseControl b (TraceT m) where
   type StM (TraceT m) a = StM (ReaderT Scope m) a
   liftBaseWith :: forall a. (RunInBase (TraceT m) b -> b a) -> TraceT m a
   liftBaseWith
-    = coerce @((RunInBase (ReaderT Scope m) b -> b a) -> ReaderT Scope m a)
+    = coerce @((RunInBase (ReaderT (Maybe Scope) m) b -> b a) -> ReaderT (Maybe Scope) m a)
              liftBaseWith
   restoreM :: forall a. StM (TraceT m) a -> TraceT m a
   restoreM
-    = coerce @(StM (ReaderT Scope m) a -> ReaderT Scope m a)
+    = coerce @(StM (ReaderT (Maybe Scope) m) a -> ReaderT (Maybe Scope) m a)
              restoreM
 
 instance (MonadIO m, MonadBaseControl IO m) => MonadTrace (TraceT m) where
-  trace bldr (TraceT reader) = TraceT $ do
-    parentScope <- ask
-    let
-      mbParentSpn = scopeSpan parentScope
-      mbParentCtx = spanContext <$> mbParentSpn
-      mbTraceID = contextTraceID <$> mbParentCtx
-    spanID <- maybe (liftBase randomSpanID) pure $ builderSpanID bldr
-    traceID <- maybe (liftBase randomTraceID) pure $ builderTraceID bldr <|> mbTraceID
-    sampling <- case builderSamplingPolicy bldr of
-      Just policy -> liftIO policy
-      Nothing -> pure $ fromMaybe Never (spanSamplingDecision <$> mbParentSpn)
-    let
-      baggages = fromMaybe Map.empty $ contextBaggages <$> mbParentCtx
-      ctx = Context traceID spanID (builderBaggages bldr `Map.union` baggages)
-      spn = Span (builderName bldr) ctx (builderReferences bldr) sampling
-      tracer = scopeTracer parentScope
-    if spanIsSampled spn
-      then do
-        tagsTV <- newTVarIO $ builderTags bldr
-        logsTV <- newTVarIO []
-        startTV <- newTVarIO Nothing -- To detect whether an exception happened during span setup.
-        let
-          run = do
-            start <- liftIO $ getPOSIXTime
-            atomically $ do
-              writeTVar startTV (Just start)
-              modifyTVar' (tracerPendingCount tracer) (+1)
-            local (const $ Scope tracer (Just spn) (Just tagsTV) (Just logsTV)) reader
-          cleanup = do
-            end <- liftIO $ getPOSIXTime
-            atomically $ readTVar startTV >>= \case
-              Nothing -> pure () -- The action was interrupted before the span was pending.
-              Just start -> do
-                modifyTVar' (tracerPendingCount tracer) (\n -> n - 1)
-                tags <- readTVar tagsTV
-                logs <- sortOn (\(t, k, _) -> (t, k)) <$> readTVar logsTV
-                writeTChan (tracerChannel tracer) (Sample spn tags logs start (end - start))
-        run `finally` cleanup
-      else local (const $ Scope tracer (Just spn) Nothing Nothing) reader
+  trace bldr (TraceT reader) = TraceT $ ask >>= \case
+    Nothing -> reader
+    Just parentScope -> do
+      let
+        mbParentSpn = scopeSpan parentScope
+        mbParentCtx = spanContext <$> mbParentSpn
+        mbTraceID = contextTraceID <$> mbParentCtx
+      spanID <- maybe (liftBase randomSpanID) pure $ builderSpanID bldr
+      traceID <- maybe (liftBase randomTraceID) pure $ builderTraceID bldr <|> mbTraceID
+      sampling <- case builderSamplingPolicy bldr of
+        Just policy -> liftIO policy
+        Nothing -> pure $ fromMaybe Never (spanSamplingDecision <$> mbParentSpn)
+      let
+        baggages = fromMaybe Map.empty $ contextBaggages <$> mbParentCtx
+        ctx = Context traceID spanID (builderBaggages bldr `Map.union` baggages)
+        spn = Span (builderName bldr) ctx (builderReferences bldr) sampling
+        tracer = scopeTracer parentScope
+      if spanIsSampled spn
+        then do
+          tagsTV <- newTVarIO $ builderTags bldr
+          logsTV <- newTVarIO []
+          startTV <- newTVarIO Nothing -- To detect whether an exception happened during span setup.
+          let
+            run = do
+              start <- liftIO $ getPOSIXTime
+              atomically $ do
+                writeTVar startTV (Just start)
+                modifyTVar' (tracerPendingCount tracer) (+1)
+              local (const $ Just $ Scope tracer (Just spn) (Just tagsTV) (Just logsTV)) reader
+            cleanup = do
+              end <- liftIO $ getPOSIXTime
+              atomically $ readTVar startTV >>= \case
+                Nothing -> pure () -- The action was interrupted before the span was pending.
+                Just start -> do
+                  modifyTVar' (tracerPendingCount tracer) (\n -> n - 1)
+                  tags <- readTVar tagsTV
+                  logs <- sortOn (\(t, k, _) -> (t, k)) <$> readTVar logsTV
+                  writeTChan (tracerChannel tracer) (Sample spn tags logs start (end - start))
+          run `finally` cleanup
+        else local (const $ Just $ Scope tracer (Just spn) Nothing Nothing) reader
 
-  activeSpan = TraceT $ asks scopeSpan
+  activeSpan = TraceT $ asks (>>= scopeSpan)
 
   addSpanEntry key (TagValue val) = TraceT $ do
     mbTV <- asks (>>= scopeTags)

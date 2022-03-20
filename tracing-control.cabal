@@ -1,7 +1,7 @@
 cabal-version: 2.0
 
 name: tracing-control
-version: 0.0.7.2
+version: 0.0.7.3
 synopsis: Distributed tracing
 description:
   An OpenTracing-compliant, simple, and extensible distributed tracing library.
@@ -51,7 +51,7 @@ library
     , stm >= 2.5
     , stm-lifted >= 2.5
     , text >= 1.2
-    , time >= 1.8 && < 1.10
+    , time >= 1.8 && < 1.13
     , transformers >= 0.5
     , transformers-base >= 0.4
   ghc-options: -Wall

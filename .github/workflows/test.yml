@@ -2,13 +2,17 @@ name: Haskell CI
 on: [push]
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        ghc: ['9.2', '9.0', '8.10', '8.8']
+        os: [ubuntu-latest, windows-latest]
     steps:
-    - uses: actions/checkout@v1
-    - uses: actions/setup-haskell@v1
+    - uses: actions/checkout@v2
+    - uses: haskell/actions/setup@v1
       with:
-        ghc-version: '8.6.5'
-        cabal-version: '3.0'
+        ghc-version: ${{ matrix.ghc }}
+        cabal-version: 'latest'
     - name: Install dependencies
       run: |
         cabal update

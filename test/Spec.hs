@@ -13,16 +13,19 @@ import Control.Monad.IO.Class (liftIO, MonadIO)
 import Control.Monad (void)
 import Control.Monad.Reader (MonadReader, Reader, ReaderT, ask, runReader, runReaderT)
 import Control.Monad.State.Strict (MonadState, StateT, evalStateT, get)
+import Data.IORef
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Set as Set
 import Test.Hspec
 import Test.Hspec.QuickCheck
-import UnliftIO
-import UnliftIO.Concurrent
-import UnliftIO.STM
 
-collectSpans :: MonadUnliftIO m => TraceT m () -> m [Span]
+import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.Trans.Control (MonadBaseControl)
+import Control.Concurrent.Lifted
+import Control.Concurrent.STM.Lifted
+
+collectSpans :: (MonadIO m, MonadBaseControl IO m) => TraceT m () -> m [Span]
 collectSpans actn = fmap sampleSpan . snd <$> collectSpanSamples actn
 
 main :: IO ()
@@ -102,6 +105,6 @@ main = hspec $ do
     it "should collect spans which are still pending after the action returns" $ do
       spans <- collectSpans $ rootSpan alwaysSampled "sleep-parent" $ do
         tmv <- newEmptyTMVarIO
-        void $ forkIO $ childSpan "sleep-child" $ atomically (putTMVar tmv ()) >> threadDelay 20000
+        void $ fork $ childSpan "sleep-child" $ atomically (putTMVar tmv ()) >> threadDelay 20000
         void $ atomically $ readTMVar tmv
       fmap spanName spans `shouldMatchList` ["sleep-parent", "sleep-child"]

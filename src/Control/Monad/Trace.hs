@@ -1,7 +1,13 @@
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ImpredicativeTypes #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeFamilies #-}         -- For the MonadBaseControl instance.
 {-# LANGUAGE UndecidableInstances #-} -- For the MonadReader instance.
 
 -- | This module is useful mostly for tracing backend implementors. If you are only interested in
@@ -9,7 +15,7 @@
 module Control.Monad.Trace (
   -- * Tracers
   Tracer, newTracer,
-  runTraceT, runTraceT', TraceT,
+  runTraceT, runTraceT', TraceT(..),
 
   -- * Collected data
   -- | Tracers currently expose two pieces of data: completed spans and pending span count. Note
@@ -29,11 +35,19 @@ import Control.Monad.Trace.Class
 import Control.Monad.Trace.Internal
 
 import Control.Applicative ((<|>))
+import Control.Concurrent.STM.Lifted (TChan, TVar, atomically, modifyTVar', newTChanIO, newTVarIO, readTVar, writeTChan, writeTVar)
+import Control.Exception.Lifted (finally)
+import Control.Monad.Base (MonadBase, liftBase)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (ReaderT(ReaderT), ask, asks, local, runReaderT)
 import Control.Monad.Reader.Class (MonadReader)
+import Control.Monad.Error.Class (MonadError)
+import Control.Monad.State.Class (MonadState)
 import Control.Monad.Trans.Class (MonadTrans, lift)
+import Control.Monad.Trans.Control (MonadBaseControl(..), RunInBase)
+import Control.Monad.Writer.Class (MonadWriter)
 import qualified Data.Aeson as JSON
+import Data.Coerce
 import Data.Foldable (for_)
 import Data.List (sortOn)
 import Data.Map.Strict (Map)
@@ -41,9 +55,6 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe)
 import Data.Time.Clock (NominalDiffTime)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
-import UnliftIO (MonadUnliftIO, withRunInIO)
-import UnliftIO.Exception (finally)
-import UnliftIO.STM (TChan, TVar, atomically, modifyTVar', newTChanIO, newTVarIO, readTVar, writeTChan, writeTVar)
 
 -- | A collection of span tags.
 type Tags = Map Key JSON.Value
@@ -102,13 +113,27 @@ data Scope = Scope
 
 -- | A span generation monad.
 newtype TraceT m a = TraceT { traceTReader :: ReaderT (Maybe Scope) m a }
-  deriving (Functor, Applicative, Monad, MonadIO, MonadTrans)
+  deriving ( Functor, Applicative, Monad, MonadTrans
+           , MonadWriter w, MonadState s, MonadError e
+           , MonadIO, MonadBase b )
 
 instance MonadReader r m => MonadReader r (TraceT m) where
   ask = lift ask
   local f (TraceT (ReaderT g)) = TraceT $ ReaderT $ \r -> local f $ g r
 
-instance MonadUnliftIO m => MonadTrace (TraceT m) where
+-- Cannot be derived in GHC 8.0 due to type family.
+instance MonadBaseControl b m => MonadBaseControl b (TraceT m) where
+  type StM (TraceT m) a = StM (ReaderT Scope m) a
+  liftBaseWith :: forall a. (RunInBase (TraceT m) b -> b a) -> TraceT m a
+  liftBaseWith
+    = coerce @((RunInBase (ReaderT (Maybe Scope) m) b -> b a) -> ReaderT (Maybe Scope) m a)
+             liftBaseWith
+  restoreM :: forall a. StM (TraceT m) a -> TraceT m a
+  restoreM
+    = coerce @(StM (ReaderT (Maybe Scope) m) a -> ReaderT (Maybe Scope) m a)
+             restoreM
+
+instance (MonadIO m, MonadBaseControl IO m) => MonadTrace (TraceT m) where
   trace bldr (TraceT reader) = TraceT $ ask >>= \case
     Nothing -> reader
     Just parentScope -> do
@@ -116,8 +141,8 @@ instance MonadUnliftIO m => MonadTrace (TraceT m) where
         mbParentSpn = scopeSpan parentScope
         mbParentCtx = spanContext <$> mbParentSpn
         mbTraceID = contextTraceID <$> mbParentCtx
-      spanID <- maybe (liftIO randomSpanID) pure $ builderSpanID bldr
-      traceID <- maybe (liftIO randomTraceID) pure $ builderTraceID bldr <|> mbTraceID
+      spanID <- maybe (liftBase randomSpanID) pure $ builderSpanID bldr
+      traceID <- maybe (liftBase randomTraceID) pure $ builderTraceID bldr <|> mbTraceID
       sampling <- case builderSamplingPolicy bldr of
         Just policy -> liftIO policy
         Nothing -> pure $ fromMaybe Never (spanSamplingDecision <$> mbParentSpn)
@@ -132,13 +157,12 @@ instance MonadUnliftIO m => MonadTrace (TraceT m) where
           logsTV <- newTVarIO []
           startTV <- newTVarIO Nothing -- To detect whether an exception happened during span setup.
           let
-            scope = Scope tracer (Just spn) (Just tagsTV) (Just logsTV)
             run = do
               start <- liftIO $ getPOSIXTime
               atomically $ do
                 writeTVar startTV (Just start)
                 modifyTVar' (tracerPendingCount tracer) (+1)
-              local (const $ Just scope) reader
+              local (const $ Just $ Scope tracer (Just spn) (Just tagsTV) (Just logsTV)) reader
             cleanup = do
               end <- liftIO $ getPOSIXTime
               atomically $ readTVar startTV >>= \case
@@ -161,9 +185,6 @@ instance MonadUnliftIO m => MonadTrace (TraceT m) where
     for_ mbTV $ \tv -> do
       time <- maybe (liftIO getPOSIXTime) pure mbTime
       atomically $ modifyTVar' tv ((time, key, val) :)
-
-instance MonadUnliftIO m => MonadUnliftIO (TraceT m) where
-  withRunInIO inner = TraceT $ withRunInIO $ \run -> inner (run . traceTReader)
 
 -- | Trace an action, sampling its generated spans. This method is thread-safe and can be used to
 -- trace multiple actions concurrently.

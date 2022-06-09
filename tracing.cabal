@@ -44,7 +44,7 @@ library
     , random >= 1.1
     , stm >= 2.5
     , text >= 1.2
-    , time >= 1.8 && < 1.10
+    , time >= 1.8
     , transformers >= 0.5
     , unliftio >= 0.2
   ghc-options: -Wall

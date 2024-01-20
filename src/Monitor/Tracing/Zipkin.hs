@@ -30,7 +30,7 @@ module Monitor.Tracing.Zipkin (
 
   -- * Custom metadata
   -- ** Tags
-  tag, addTag, addInheritedTag, addProducerKind,
+  tag, addTag, addInheritedTag, addConsumerKind, addProducerKind,
   -- ** Annotations
   -- | Annotations are similar to tags, but timestamped.
   annotate, annotateAt,
@@ -174,6 +174,16 @@ tag key val = addSpanEntry (publicKeyPrefix <> key) (tagTextValue val)
 addTag :: Text -> Text -> Builder -> Builder
 addTag key val bldr =
   bldr { builderTags = Map.insert (publicKeyPrefix <> key) (JSON.toJSON val) (builderTags bldr) }
+
+-- | Adds a consumer kind tag to a builder. This is a convenience method to use with 'rootSpanWith',
+-- for example:
+--
+-- > rootSpanWith addConsumerKind alwaysSampled "root" $ action
+--
+-- Use this method if you want to create a root consumer span. Otherwise use 'consumerSpanWith' to
+-- create a sub span with consumer kind.
+addConsumerKind :: Builder -> Builder
+addConsumerKind = addTag kindKey consumerKindValue
 
 -- | Adds a producer kind tag to a builder. This is a convenience method to use with 'rootSpanWith',
 -- for example:
@@ -349,6 +359,10 @@ endpointKey = "z.e"
 kindKey :: Key
 kindKey = "z.k"
 
+-- Value that indicates a consumer span kind.
+consumerKindValue :: Text
+consumerKindValue = "CONSUMER"
+
 -- Value that indicates a producer span kind.
 producerKindValue :: Text
 producerKindValue = "PRODUCER"
@@ -407,7 +421,7 @@ serverSpanWith f b3 =
 consumerSpanWith :: MonadTrace m => (Builder -> Builder) -> B3 -> m a -> m a
 consumerSpanWith f b3 =
   let endo = Endo $ \bldr -> f $ bldr { builderReferences = Set.singleton (ChildOf $ b3SpanID b3) }
-  in incomingSpan "CONSUMER" b3 endo
+  in incomingSpan consumerKindValue b3 endo
 
 -- | Information about a hosted service, included in spans and visible in the Zipkin UI.
 data Endpoint = Endpoint

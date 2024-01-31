@@ -183,7 +183,7 @@ addTag key val bldr =
 -- Use this method if you want to create a root consumer span. Otherwise use 'consumerSpanWith' to
 -- create a sub span with consumer kind.
 addConsumerKind :: Builder -> Builder
-addConsumerKind = addTag kindKey consumerKindValue
+addConsumerKind = appEndo $ insertTag kindKey consumerKindValue
 
 -- | Adds a producer kind tag to a builder. This is a convenience method to use with 'rootSpanWith',
 -- for example:
@@ -193,7 +193,7 @@ addConsumerKind = addTag kindKey consumerKindValue
 -- Use this method if you want to create a root producer span. Otherwise use 'producerSpanWith' to
 -- create a sub span with producer kind.
 addProducerKind :: Builder -> Builder
-addProducerKind = addTag kindKey producerKindValue
+addProducerKind = appEndo $ insertTag kindKey producerKindValue
 
 -- | Adds an inherited tag to a builder. Unlike a tag added via 'addTag', this tag:
 --
